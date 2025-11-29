@@ -14,8 +14,6 @@
 якості освіти ЗВО.
 """
 "працюйй"
-from __future__ import annotations
-
 import streamlit as st
 import plotly.express as px
 import pandas as pd
