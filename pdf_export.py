@@ -1,9 +1,8 @@
 """
-Модуль експорту звіту у формат PDF.
-Виправлено:
-- Коректний розрахунок висоти рядків для кирилиці (щоб уникнути розриву клітинок).
-- Уніфікований дизайн діаграм (однаковий розмір, великі шрифти).
-- Легенда знизу для економії місця по ширині.
+Модуль експорту звіту у форматі PDF.
+Фінальні правки:
+- Агресивний контроль розриву сторінок для таблиць (щоб не рвало Q14).
+- Різні розміри для діаграм: стовпчикові - компактні по висоті, кругові - високі.
 """
 
 import io
@@ -23,7 +22,6 @@ from typing import List, Optional
 FONT_URL = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf"
 FONT_NAME = "DejaVuSans"
 
-CHART_FIGSIZE = (10, 7)   
 CHART_DPI = 150           
 FONT_SIZE_BASE = 11       
 BAR_WIDTH = 0.6           
@@ -79,7 +77,8 @@ class PDFReport(FPDF):
         self.set_text_color(0, 0, 0)
 
     def chapter_title(self, text):
-        if self.get_y() > 250:
+        # Якщо ми нижче 240мм, краще почати нову сторінку для заголовка
+        if self.get_y() > 240:
             self.add_page()
         self.set_font(FONT_NAME, "", 12)
         self.set_fill_color(220, 230, 241) 
@@ -89,18 +88,15 @@ class PDFReport(FPDF):
     def calculate_row_height(self, text_val, col_width, line_height):
         """
         Розрахунок висоти рядка.
-        ВИПРАВЛЕНО: Використовуємо дільник 40 (замість 50).
-        Кирилиця в DejaVuSans широка, тому краще переоцінити висоту,
-        ніж недооцінити й отримати розрив рядка.
+        ВИПРАВЛЕНО: Дільник 35. Це дуже консервативно. 
+        Скрипт буде думати, що рядок довший, і переноситиме раніше.
         """
         text_len = len(str(text_val))
-        # Безпечний дільник для ширини 110мм і шрифту 10pt
-        chars_per_line = 40 
+        chars_per_line = 35 
         
         lines_count = math.ceil(text_len / chars_per_line)
         if lines_count < 1: lines_count = 1
         
-        # Врахування явних переносів
         newlines = str(text_val).count('\n')
         lines_count += newlines
         
@@ -121,12 +117,12 @@ class PDFReport(FPDF):
             row_heights.append(h)
             total_table_height += h
 
-        # Поріг розриву сторінки (трохи зменшив для безпеки)
-        page_break_trigger = 265 
+        # ВИПРАВЛЕНО: Поріг 250 (залишаємо 47мм знизу порожніми для безпеки)
+        page_break_trigger = 250 
         space_left = page_break_trigger - self.get_y()
 
-        # Якщо вся таблиця влазить на нову сторінку, але не влазить сюди -> переносимо всю
-        if total_table_height < 240 and total_table_height > space_left:
+        # Якщо таблиця середня і не влазить -> нова сторінка
+        if total_table_height < 230 and total_table_height > space_left:
             self.add_page()
 
         # Шапка
@@ -144,11 +140,9 @@ class PDFReport(FPDF):
             
             curr_h = row_heights[idx]
 
-            # Ключовий момент: перевіряємо, чи влізе цей КОНКРЕТНИЙ рядок
-            # Якщо ні - примусово розриваємо сторінку ДО друку рядка
+            # Перевірка на розрив
             if self.get_y() + curr_h > page_break_trigger:
                 self.add_page()
-                # Дублюємо шапку на новій сторінці
                 for i, h in enumerate(headers):
                     w = col_width[i] if i < len(col_width) else 20
                     self.cell(w, line_height, str(h), border=1, fill=True, align='C')
@@ -157,42 +151,40 @@ class PDFReport(FPDF):
             x_start = self.get_x()
             y_start = self.get_y()
 
-            # Текст
             self.multi_cell(col_width[0], line_height, text_val, border=1, align='L')
             
             x_next = self.get_x()
             y_next = self.get_y()
             h_real = y_next - y_start 
-            
-            # Якщо реальна висота виявилась навіть більшою за прогноз (рідко, але буває)
             final_h = max(h_real, curr_h)
 
-            # Числа
             self.set_xy(x_start + col_width[0], y_start)
             self.cell(col_width[1], final_h, count_val, border=1, align='C')
             self.cell(col_width[2], final_h, perc_val, border=1, align='C')
             
-            # Перехід
             self.set_xy(x_start, y_start + final_h)
 
     def add_chart(self, qs: QuestionSummary):
         if qs.table.empty:
             return
 
-        # Перевірка місця (з запасом)
-        if self.get_y() > 170:
-            self.add_page()
+        # Перевірка місця. 
+        # Якщо це стовпчикова - їй треба менше місця (~120мм по Y), круговій ~180мм
+        space_needed = 120 if qs.question.qtype == QuestionType.SCALE else 180
+        if self.get_y() > (280 - space_needed/2): # Груба оцінка
+             self.add_page()
 
         plt.rcParams.update({'font.size': FONT_SIZE_BASE}) 
-        plt.figure(figsize=CHART_FIGSIZE) 
         
         labels = qs.table["Варіант відповіді"].astype(str).tolist()
         values = qs.table["Кількість"]
-
-        # Обрізка тексту легенди для стовпчиків
         wrapped_labels = [textwrap.fill(l, 40) for l in labels]
 
+        # ВИПРАВЛЕНО: Розділення розмірів
         if qs.question.qtype == QuestionType.SCALE:
+            # --- СТОВПЧИКОВА: НИЗЬКА ---
+            plt.figure(figsize=(10, 4.5)) # Ширина 10, Висота 4.5 (компактна)
+            
             bars = plt.bar(wrapped_labels, values, color='#4F81BD', width=BAR_WIDTH)
             plt.ylabel('Кількість')
             plt.grid(axis='y', linestyle='--', alpha=0.5)
@@ -203,6 +195,9 @@ class PDFReport(FPDF):
                 plt.text(bar.get_x() + bar.get_width()/2., height + 0.1,
                          f'{int(height)}', ha='center', va='bottom', fontweight='bold')
         else:
+            # --- КРУГОВА: ВИСОКА ---
+            plt.figure(figsize=(10, 7)) # Ширина 10, Висота 7 (для легенди)
+            
             colors = ['#4F81BD', '#C0504D', '#9BBB59', '#8064A2', '#4BACC6', '#F79646']
             c_arg = colors[:len(values)] if len(values) <= len(colors) else None
             
