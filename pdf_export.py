@@ -1,7 +1,9 @@
 """
 Модуль експорту звіту у формат PDF.
-Забезпечує гарантовану підтримку кирилиці (DejaVuSans), 
-логіку нерозривності таблиць (Keep Together) та баланс розмірів діаграм і шрифтів.
+Забезпечує:
+- Підтримку кирилиці (DejaVuSans).
+- Нерозривність таблиць (перенос на нову сторінку, якщо не влазять).
+- УНІФІКОВАНИЙ дизайн діаграм (однаковий розмір, великі шрифти).
 """
 
 import io
@@ -16,17 +18,26 @@ from classification import QuestionInfo, QuestionType
 from summary import QuestionSummary
 from typing import List, Optional
 
-# Посилання на шрифт
+# --- КОНСТАНТИ ---
 FONT_URL = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf"
 FONT_NAME = "DejaVuSans"
+
+# Уніфіковані налаштування для графіків
+CHART_FIGSIZE = (11, 6)   # Однаковий розмір полотна для всіх типів
+CHART_DPI = 150           # Якість зображення
+FONT_SIZE_BASE = 12       # Базовий шрифт для осей і легенди
+FONT_SIZE_TITLE = 14      # Шрифт (хоча заголовок ми пишемо в PDF, але для осей корисно)
+BAR_WIDTH = 0.5           # Ширина стовпчиків (щоб не були товстими)
 
 def get_font_path() -> Optional[str]:
     """Шукає або завантажує шрифт DejaVuSans.ttf."""
     local_path = "DejaVuSans.ttf"
     
+    # 1. Локальна перевірка
     if os.path.exists(local_path) and os.path.getsize(local_path) > 10000:
         return local_path
 
+    # 2. Системна перевірка
     system_paths = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
@@ -36,6 +47,7 @@ def get_font_path() -> Optional[str]:
         if os.path.exists(path):
             return path
 
+    # 3. Завантаження
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(FONT_URL, headers=headers, timeout=10)
@@ -71,6 +83,7 @@ class PDFReport(FPDF):
         self.set_text_color(0, 0, 0)
 
     def chapter_title(self, text):
+        # Якщо заголовок внизу сторінки, переносимо
         if self.get_y() > 250:
             self.add_page()
             
@@ -80,8 +93,9 @@ class PDFReport(FPDF):
         self.ln(2)
 
     def calculate_row_height(self, text_val, col_width, line_height):
-        """Розраховує висоту рядка."""
+        """Розраховує висоту рядка для тексту."""
         text_len = len(str(text_val))
+        # Приблизно 50 символів в рядок шириною 110мм
         lines_count = math.ceil(text_len / 50)
         if lines_count < 1: lines_count = 1
         newlines = str(text_val).count('\n')
@@ -94,7 +108,7 @@ class PDFReport(FPDF):
         col_width = [110, 30, 20] 
         headers = df.columns.tolist()
 
-        # Розрахунок повної висоти
+        # 1. Розрахунок повної висоти таблиці
         total_table_height = line_height 
         row_heights = []
         for row in df.itertuples(index=False):
@@ -103,21 +117,22 @@ class PDFReport(FPDF):
             row_heights.append(h)
             total_table_height += h
 
-        # Логіка переносу всієї таблиці
+        # 2. Логіка "Keep Together"
         page_break_trigger = 270
         space_left = page_break_trigger - self.get_y()
 
+        # Якщо таблиця середня (до 240мм) і не влазить -> нова сторінка
         if total_table_height < 240 and total_table_height > space_left:
             self.add_page()
 
-        # Друк шапки
+        # 3. Друк шапки
         self.set_fill_color(240, 240, 240)
         for i, h in enumerate(headers):
             w = col_width[i] if i < len(col_width) else 20
             self.cell(w, line_height, str(h), border=1, fill=True, align='C')
         self.ln(line_height)
 
-        # Друк рядків
+        # 4. Друк рядків
         for idx, row in enumerate(df.itertuples(index=False)):
             text_val = str(row[0])
             count_val = str(row[1])
@@ -125,8 +140,10 @@ class PDFReport(FPDF):
             
             curr_h = row_heights[idx]
 
+            # Аварійний розрив для дуже довгих таблиць
             if self.get_y() + curr_h > page_break_trigger:
                 self.add_page()
+                # Повтор шапки
                 for i, h in enumerate(headers):
                     w = col_width[i] if i < len(col_width) else 20
                     self.cell(w, line_height, str(h), border=1, fill=True, align='C')
@@ -152,81 +169,80 @@ class PDFReport(FPDF):
         if qs.table.empty:
             return
 
-        # Перевірка місця на сторінці
+        # Завжди перевіряємо місце. Картинка займає ~90-100 мм висоти.
         if self.get_y() > 180:
             self.add_page()
 
+        # --- НАЛАШТУВАННЯ MATPLOTLIB ---
+        # Скидаємо налаштування і задаємо глобальний шрифт для цього малюнка
+        plt.rcParams.update({'font.size': FONT_SIZE_BASE}) 
+        
+        # Фіксований розмір для ВСІХ типів
+        plt.figure(figsize=CHART_FIGSIZE) 
+        
         labels = qs.table["Варіант відповіді"]
         values = qs.table["Кількість"]
 
-        # НАЛАШТУВАННЯ РОЗМІРІВ ТА ШРИФТІВ
-        
         if qs.question.qtype == QuestionType.SCALE:
-            # --- СТОВПЧИКОВА ДІАГРАМА ---
-            # Трохи менша, ніж була, щоб не виглядала гігантською
-            plt.figure(figsize=(10, 5))
+            # --- СТОВПЧИКОВА ---
+            # width=BAR_WIDTH робить їх тоншими
+            bars = plt.bar(labels, values, color='#4F81BD', width=BAR_WIDTH)
             
-            bars = plt.bar(labels, values, color='#4F81BD', width=0.6)
-            
-            # Великі шрифти
-            plt.ylabel('Кількість', fontsize=12)
+            plt.ylabel('Кількість', fontsize=FONT_SIZE_BASE)
             plt.grid(axis='y', linestyle='--', alpha=0.5)
-            plt.xticks(fontsize=11)
-            plt.yticks(fontsize=11)
             
-            # Підписи значень над стовпчиками
+            # Підписи осей
+            plt.xticks(fontsize=FONT_SIZE_BASE)
+            plt.yticks(fontsize=FONT_SIZE_BASE)
+            
+            # Числа над стовпчиками
             for bar in bars:
                 height = bar.get_height()
                 plt.text(bar.get_x() + bar.get_width()/2., height + 0.1,
-                         f'{int(height)}', ha='center', va='bottom', fontsize=12, fontweight='bold')
+                         f'{int(height)}', ha='center', va='bottom', 
+                         fontsize=FONT_SIZE_BASE, fontweight='bold')
         
         else:
-            # --- КРУГОВА ДІАГРАМА ---
-            # Більш "квадратна" пропорція дозволяє кругу бути більшим
-            plt.figure(figsize=(9, 6))
-            
+            # --- КРУГОВА ---
             colors = ['#4F81BD', '#C0504D', '#9BBB59', '#8064A2', '#4BACC6', '#F79646']
             c_arg = colors[:len(values)] if len(values) <= len(colors) else None
             
-            # Збільшений шрифт відсотків
-            # radius=1.1 трохи збільшує сам круг
+            # radius=1.1 – трохи більше стандарту (1.0)
             wedges, texts, autotexts = plt.pie(
                 values, labels=None, autopct='%1.1f%%', startangle=90, 
                 pctdistance=0.8, colors=c_arg, radius=1.1,
-                textprops={'fontsize': 12, 'weight': 'bold', 'color': 'white'}
+                textprops={'fontsize': FONT_SIZE_BASE}
             )
             
-            # Покращення читабельності відсотків (чорний контур або колір залежно від фону)
-            # Але найпростіше - зробити їх жирними
+            # Жирні відсотки
             for autotext in autotexts:
-                autotext.set_color('black')
-                autotext.set_fontsize(13)
+                autotext.set_color('white') # Білий текст на кольоровому фоні краще
                 autotext.set_weight('bold')
+                autotext.set_fontsize(FONT_SIZE_BASE + 1)
+                # Додаємо обводку (stroke), щоб читалось на світлому фоні
+                import matplotlib.patheffects as path_effects
+                autotext.set_path_effects([path_effects.withStroke(linewidth=2, foreground='black')])
 
             plt.axis('equal')
             
-            # Адаптивна легенда: якщо багато пунктів, ставимо знизу, щоб не стискала графік
-            if len(labels) > 6:
-                plt.legend(labels, loc='upper center', bbox_to_anchor=(0.5, -0.05),
-                           fontsize=12, ncol=2)
-            else:
-                # Збоку, але з більшим шрифтом
-                plt.legend(labels, loc="center left", bbox_to_anchor=(1, 0.5), fontsize=12)
+            # Легенда ЗАВЖДИ праворуч, однаковим шрифтом
+            plt.legend(labels, loc="center left", bbox_to_anchor=(1, 0.5), 
+                       fontsize=FONT_SIZE_BASE)
 
-        # tight_layout з pad=1 обрізає зайве, але залишає місце для підписів
-        plt.tight_layout(pad=1.5)
+        # Важливо: tight_layout з pad=2 дає достатньо повітря навколо
+        plt.tight_layout(pad=2.0)
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
-            plt.savefig(tmp_img.name, format='png', dpi=150, bbox_inches='tight')
+            # Зберігаємо з білими полями (bbox_inches='tight' іноді ріже легенду, якщо вона велика)
+            # Тому ми покладаємось на tight_layout і фіксований розмір
+            plt.savefig(tmp_img.name, format='png', dpi=CHART_DPI, bbox_inches='tight')
             tmp_img_path = tmp_img.name
         
         plt.close()
 
-        # Вставляємо в PDF
-        # Для кругових діаграм, які зазвичай вужчі візуально, можна центрувати
-        # Але загалом лишаємо стандартну вставку
-        img_width = 170 # мм
-        self.image(tmp_img_path, x=20, w=img_width)
+        # Вставка в PDF з фіксованою шириною 170 мм
+        # Це гарантує, що візуально всі блоки будуть однакової ширини на сторінці
+        self.image(tmp_img_path, x=20, w=170)
         self.ln(5)
         
         try:
