@@ -1,9 +1,9 @@
 """
 Модуль експорту звіту у формат PDF.
 Виправлено:
-- Проблему "маленьких діаграм" для питань з довгим текстом (Q12).
-- Легенда для кругових діаграм перенесена вниз.
-- Довгий текст у легенді автоматично переноситься.
+- Коректний розрахунок висоти рядків для кирилиці (щоб уникнути розриву клітинок).
+- Уніфікований дизайн діаграм (однаковий розмір, великі шрифти).
+- Легенда знизу для економії місця по ширині.
 """
 
 import io
@@ -23,7 +23,6 @@ from typing import List, Optional
 FONT_URL = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf"
 FONT_NAME = "DejaVuSans"
 
-# Збільшив висоту полотна, щоб вмістити легенду знизу
 CHART_FIGSIZE = (10, 7)   
 CHART_DPI = 150           
 FONT_SIZE_BASE = 11       
@@ -88,12 +87,23 @@ class PDFReport(FPDF):
         self.ln(2)
 
     def calculate_row_height(self, text_val, col_width, line_height):
-        """Розрахунок висоти рядка."""
+        """
+        Розрахунок висоти рядка.
+        ВИПРАВЛЕНО: Використовуємо дільник 40 (замість 50).
+        Кирилиця в DejaVuSans широка, тому краще переоцінити висоту,
+        ніж недооцінити й отримати розрив рядка.
+        """
         text_len = len(str(text_val))
-        lines_count = math.ceil(text_len / 50)
+        # Безпечний дільник для ширини 110мм і шрифту 10pt
+        chars_per_line = 40 
+        
+        lines_count = math.ceil(text_len / chars_per_line)
         if lines_count < 1: lines_count = 1
+        
+        # Врахування явних переносів
         newlines = str(text_val).count('\n')
         lines_count += newlines
+        
         return lines_count * line_height
 
     def add_table(self, df: pd.DataFrame):
@@ -111,9 +121,11 @@ class PDFReport(FPDF):
             row_heights.append(h)
             total_table_height += h
 
-        page_break_trigger = 270
+        # Поріг розриву сторінки (трохи зменшив для безпеки)
+        page_break_trigger = 265 
         space_left = page_break_trigger - self.get_y()
 
+        # Якщо вся таблиця влазить на нову сторінку, але не влазить сюди -> переносимо всю
         if total_table_height < 240 and total_table_height > space_left:
             self.add_page()
 
@@ -132,8 +144,11 @@ class PDFReport(FPDF):
             
             curr_h = row_heights[idx]
 
+            # Ключовий момент: перевіряємо, чи влізе цей КОНКРЕТНИЙ рядок
+            # Якщо ні - примусово розриваємо сторінку ДО друку рядка
             if self.get_y() + curr_h > page_break_trigger:
                 self.add_page()
+                # Дублюємо шапку на новій сторінці
                 for i, h in enumerate(headers):
                     w = col_width[i] if i < len(col_width) else 20
                     self.cell(w, line_height, str(h), border=1, fill=True, align='C')
@@ -142,24 +157,30 @@ class PDFReport(FPDF):
             x_start = self.get_x()
             y_start = self.get_y()
 
+            # Текст
             self.multi_cell(col_width[0], line_height, text_val, border=1, align='L')
             
             x_next = self.get_x()
             y_next = self.get_y()
             h_real = y_next - y_start 
+            
+            # Якщо реальна висота виявилась навіть більшою за прогноз (рідко, але буває)
             final_h = max(h_real, curr_h)
 
+            # Числа
             self.set_xy(x_start + col_width[0], y_start)
             self.cell(col_width[1], final_h, count_val, border=1, align='C')
             self.cell(col_width[2], final_h, perc_val, border=1, align='C')
             
+            # Перехід
             self.set_xy(x_start, y_start + final_h)
 
     def add_chart(self, qs: QuestionSummary):
         if qs.table.empty:
             return
 
-        if self.get_y() > 180:
+        # Перевірка місця (з запасом)
+        if self.get_y() > 170:
             self.add_page()
 
         plt.rcParams.update({'font.size': FONT_SIZE_BASE}) 
@@ -168,32 +189,23 @@ class PDFReport(FPDF):
         labels = qs.table["Варіант відповіді"].astype(str).tolist()
         values = qs.table["Кількість"]
 
-        # --- ОБРОБКА ТЕКСТУ ЛЕГЕНДИ ---
-        # Якщо текст довгий, розбиваємо його на рядки по 40 символів
-        # Це критично для Q12, де довгі відповіді "з'їдають" графік
+        # Обрізка тексту легенди для стовпчиків
         wrapped_labels = [textwrap.fill(l, 40) for l in labels]
 
         if qs.question.qtype == QuestionType.SCALE:
-            # СТОВПЧИКОВА
             bars = plt.bar(wrapped_labels, values, color='#4F81BD', width=BAR_WIDTH)
             plt.ylabel('Кількість')
             plt.grid(axis='y', linestyle='--', alpha=0.5)
-            
-            # Якщо підписи осі X дуже довгі, повертаємо їх або зменшуємо шрифт
-            # Але wrap вже допоможе
             plt.xticks(rotation=0) 
             
             for bar in bars:
                 height = bar.get_height()
                 plt.text(bar.get_x() + bar.get_width()/2., height + 0.1,
                          f'{int(height)}', ha='center', va='bottom', fontweight='bold')
-        
         else:
-            # КРУГОВА
             colors = ['#4F81BD', '#C0504D', '#9BBB59', '#8064A2', '#4BACC6', '#F79646']
             c_arg = colors[:len(values)] if len(values) <= len(colors) else None
             
-            # radius=1.2 гарантує великий розмір кола
             wedges, texts, autotexts = plt.pie(
                 values, labels=None, autopct='%1.1f%%', startangle=90, 
                 pctdistance=0.8, colors=c_arg, radius=1.2,
@@ -208,19 +220,15 @@ class PDFReport(FPDF):
 
             plt.axis('equal')
             
-            # ЛЕГЕНДА ЗАВЖДИ ЗНИЗУ
-            # Це дозволяє кругу займати всю ширину і не залежати від довжини тексту
-            # ncol=2 або 1 залежно від довжини
             cols = 2 if len(labels) > 3 else 1
             plt.legend(
                 wrapped_labels, 
                 loc="upper center", 
-                bbox_to_anchor=(0.5, -0.05), # Зсув під графік
+                bbox_to_anchor=(0.5, -0.05),
                 ncol=cols,
-                frameon=False # Без рамки, виглядає чистіше
+                frameon=False
             )
 
-        # Використовуємо tight_layout, але він тепер не стискатиме боки, бо легенда знизу
         plt.tight_layout()
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
@@ -229,7 +237,6 @@ class PDFReport(FPDF):
         
         plt.close()
 
-        # Центруємо картинку по ширині сторінки (x=20, w=170)
         self.image(tmp_img_path, x=20, w=170)
         self.ln(5)
         
