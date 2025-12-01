@@ -13,14 +13,19 @@
 систем забезпечення якості освіти.
 """
 
+"""
+Модуль формування Excel-звіту з результатами опитування.
+"""
+
 from __future__ import annotations
 
 import io
 from typing import Dict, List
 
 import pandas as pd
+import xlsxwriter
 
-from classification import QuestionInfo
+from classification import QuestionInfo, QuestionType
 from summary import QuestionSummary
 
 
@@ -32,20 +37,35 @@ def build_excel_report(
     range_info: str,
 ) -> bytes:
     """
-    Створює Excel-звіт та повертає його у вигляді байтів для завантаження.
-    Додає кругові діаграми для питань, що мають зведені таблиці.
-
-    :param original_df: повна таблиця відповідей.
-    :param sliced_df: вибраний користувачем діапазон.
-    :param qinfo: інформація про питання.
-    :param summaries: список зведених таблиць.
-    :param range_info: текстовий опис діапазону (для титулу).
+    Створює Excel-звіт та повертає його у вигляді байтів.
+    Використовує прямий запис xlsxwriter для уникнення конфліктів з pandas.
     """
     output = io.BytesIO()
 
-    # Використовуємо engine="xlsxwriter", бо він підтримує створення діаграм
+    # Створюємо об'єкт workbook
+    # ВАЖЛИВО: engine_kwargs={'options': {'nan_inf_to_errors': True}} допомагає уникнути помилок з NaN
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        # --- 1. Технічна інформація ---
+        workbook = writer.book
+
+        # --- Стилі ---
+        header_fmt = workbook.add_format({
+            "bold": True, 
+            "font_size": 11,
+            "bottom": 1,
+            "bg_color": "#F2F2F2"
+        })
+        title_fmt = workbook.add_format({
+            "bold": True, 
+            "font_size": 12, 
+            "fg_color": "#DCE6F1",
+            "border": 1
+        })
+        # Стиль для відсотків (опціонально)
+        percent_fmt = workbook.add_format({'num_format': '0.0'})
+        
+        # ---------------------------------------------------------
+        # 1. Технічна інформація (використовуємо pandas для простоти)
+        # ---------------------------------------------------------
         meta_df = pd.DataFrame(
             {
                 "Параметр": [
@@ -61,85 +81,98 @@ def build_excel_report(
             }
         )
         meta_df.to_excel(writer, sheet_name="Технічна_інформація", index=False)
+        ws_meta = writer.sheets["Технічна_інформація"]
+        ws_meta.set_column(0, 0, 40)
+        ws_meta.set_column(1, 1, 50)
 
-        # Підлаштуємо ширину колонок для краси
-        workbook = writer.book
-        worksheet_meta = writer.sheets["Технічна_інформація"]
-        worksheet_meta.set_column("A:A", 40)
-        worksheet_meta.set_column("B:B", 50)
-
-        # --- 2. Вихідні дані (скорочено/фільтровано) ---
+        # ---------------------------------------------------------
+        # 2. Вихідні дані
+        # ---------------------------------------------------------
         sliced_df.to_excel(writer, sheet_name="Вихідні_дані", index=False)
 
-        # --- 3. Таблиці підсумків та діаграми ---
-        sheet_name_summary = "Підсумки"
-        ws = workbook.add_worksheet(sheet_name_summary)
-        writer.sheets[sheet_name_summary] = ws
-
-        # Формат для заголовків питань
-        bold_fmt = workbook.add_format({"bold": True, "font_size": 11})
+        # ---------------------------------------------------------
+        # 3. Таблиці підсумків та діаграми
+        # ---------------------------------------------------------
+        sheet_name = "Підсумки"
+        worksheet = workbook.add_worksheet(sheet_name)
         
-        # Задаємо ширину колонок для підсумків
-        ws.set_column("A:A", 40)  # Варіант відповіді
-        ws.set_column("B:C", 10)  # Числа та %
-
+        # Налаштування колонок
+        worksheet.set_column(0, 0, 50)  # Варіант відповіді
+        worksheet.set_column(1, 2, 12)  # Числа
+        
         current_row = 0
 
         for qs in summaries:
-            question_title = f"{qs.question.code}. {qs.question.text}"
-            
-            # 1. Записуємо назву питання
-            ws.write(current_row, 0, question_title, bold_fmt)
+            # -- 3.1. Заголовок питання --
+            q_title = f"{qs.question.code}. {qs.question.text}"
+            worksheet.merge_range(current_row, 0, current_row, 2, q_title, title_fmt)
             current_row += 1
 
-            # Якщо таблиця порожня (наприклад, відкрите питання або немає даних)
             if qs.table.empty:
-                ws.write(current_row, 0, "(Немає даних для діаграми або текстове питання)")
+                worksheet.write(current_row, 0, "Немає даних або текстові відповіді.")
                 current_row += 2
                 continue
 
-            # 2. Записуємо таблицю даних
-            # qs.table має колонки: ["Варіант відповіді", "Кількість", "%"]
-            # startrow=current_row, startcol=0
-            qs.table.to_excel(
-                writer,
-                sheet_name=sheet_name_summary,
-                startrow=current_row,
-                startcol=0,
-                index=False,
-                header=True,
-            )
-
-            # Визначаємо координати даних для діаграми
-            # Заголовок таблиці займає 1 рядок, тому дані починаються з current_row + 1
-            n_rows = len(qs.table)
-            first_data_row = current_row + 1
-            last_data_row = current_row + n_rows
-
-            # Колонки (0-based): A=0 (Labels), B=1 (Values)
+            # -- 3.2. Ручний запис таблиці (щоб не ламати worksheet через pandas) --
+            # Заголовки таблиці
+            columns = qs.table.columns.tolist() # ["Варіант", "Кількість", "%"]
+            for col_idx, col_name in enumerate(columns):
+                worksheet.write(current_row, col_idx, col_name, header_fmt)
             
-            # 3. Створюємо діаграму
-            chart = workbook.add_chart({"type": "pie"})
+            # Дані таблиці
+            # Конвертуємо в numpy array або list of lists
+            data_rows = qs.table.values.tolist()
+            start_data_row = current_row + 1
+            
+            for i, row_data in enumerate(data_rows):
+                # row_data[0] -> Варіант, row_data[1] -> Кількість, row_data[2] -> %
+                worksheet.write(start_data_row + i, 0, row_data[0])
+                worksheet.write(start_data_row + i, 1, row_data[1])
+                worksheet.write(start_data_row + i, 2, row_data[2], percent_fmt)
+
+            n_items = len(data_rows)
+            end_data_row = start_data_row + n_items - 1
+            
+            # Якщо даних немає (на всяк випадок), пропускаємо діаграму
+            if n_items == 0:
+                current_row = start_data_row + 2
+                continue
+
+            # -- 3.3. Побудова діаграми --
+            # Вибір типу
+            if qs.question.qtype == QuestionType.SCALE:
+                chart_type = 'column'
+            else:
+                chart_type = 'pie'
+
+            chart = workbook.add_chart({'type': chart_type})
+
+            # Посилання на дані: [sheet, first_row, first_col, last_row, last_col]
+            # Колонка 0 - категорії, Колонка 1 - значення (Кількість)
             
             chart.add_series({
-                "name": "Кількість",
-                # [sheetname, first_row, first_col, last_row, last_col]
-                "categories": [sheet_name_summary, first_data_row, 0, last_data_row, 0],
-                "values":     [sheet_name_summary, first_data_row, 1, last_data_row, 1],
-                "data_labels": {"percentage": True},  # Показувати відсотки на діаграмі
+                'name':       'Кількість',
+                'categories': [sheet_name, start_data_row, 0, end_data_row, 0],
+                'values':     [sheet_name, start_data_row, 1, end_data_row, 1],
+                'data_labels': {'value': True, 'percentage': (chart_type == 'pie')},
             })
-            
-            chart.set_title({"name": question_title})
-            chart.set_style(10)  # Стиль діаграми (можна змінювати 1-48)
 
-            # 4. Вставляємо діаграму праворуч від таблиці (наприклад, колонка E, індекс 4)
-            # Вставляємо трохи вище (на рівні заголовку питання), щоб було компактно
-            ws.insert_chart(current_row - 1, 4, chart)
+            # Назва діаграми (коротка, тільки код питання, бо текст довгий)
+            chart.set_title({'name': str(qs.question.code)})
+            chart.set_style(10)
 
-            # 5. Зсуваємо курсор вниз
-            # Нам треба відступити місце або під таблицю, або під діаграму (що більше)
-            # Стандартна висота діаграми ~15 рядків.
-            rows_occupied = max(n_rows + 3, 18)
-            current_row += rows_occupied
+            if chart_type == 'column':
+                 chart.set_legend({'position': 'none'})
+                 chart.set_x_axis({'name': 'Варіант'})
+                 chart.set_y_axis({'name': 'Кількість'})
+
+            # Вставка діаграми
+            worksheet.insert_chart(current_row, 4, chart)
+
+            # Відступ для наступного блоку
+            # Висота блоку = заголовок + хедер + рядки даних
+            # Або висота діаграми (~15 рядків)
+            block_height = max(n_items + 2, 18)
+            current_row += block_height
 
     return output.getvalue()
