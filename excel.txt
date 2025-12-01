@@ -1,0 +1,394 @@
+"""
+Модуль формування Excel-звіту з результатами опитування.
+
+Застосування звітів у форматі XLSX відповідає практиці документування
+результатів соціологічних досліджень у ЗВО та вимогам внутрішніх
+систем забезпечення якості освіти.
+"""
+
+from __future__ import annotations
+
+import io
+from typing import Dict, List
+
+import pandas as pd
+
+from classification import QuestionInfo
+from summary import QuestionSummary
+
+
+def build_excel_report(
+    original_df: pd.DataFrame,
+    sliced_df: pd.DataFrame,
+    qinfo: Dict[str, QuestionInfo],
+    summaries: List[QuestionSummary],
+    range_info: str,
+) -> bytes:
+    """
+    Створює Excel-звіт та повертає його у вигляді байтів для завантаження.
+
+    :param original_df: повна таблиця відповідей.
+    :param sliced_df: вибраний користувачем діапазон.
+    :param qinfo: інформація про питання.
+    :param summaries: список зведених таблиць.
+    :param range_info: текстовий опис діапазону (для титулу).
+    """
+    output = io.BytesIO()
+
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        # 1. Технічна інформація
+        meta_df = pd.DataFrame(
+            {
+                "Параметр": [
+                    "Загальна кількість відповідей",
+                    "Кількість відповідей у вибраному діапазоні",
+                    "Діапазон обробки",
+                ],
+                "Значення": [
+                    len(original_df),
+                    len(sliced_df),
+                    range_info,
+                ],
+            }
+        )
+        meta_df.to_excel(writer, sheet_name="Технічна_інформація", index=False)
+
+        # 2. Вихідні дані (скорочено)
+        sliced_df.to_excel(writer, sheet_name="Вихідні_дані", index=False)
+
+        # 3. Таблиці підсумків (по всіх питаннях)
+        workbook = writer.book
+        ws = workbook.add_worksheet("Підсумки")
+        writer.sheets["Підсумки"] = ws
+
+        row = 0
+        for qs in summaries:
+            ws.write(row, 0, f"{qs.question.code}. {qs.question.text}")
+            row += 1
+            # записуємо таблицю
+            qs.table.to_excel(
+                writer,
+                sheet_name="Підсумки",
+                startrow=row,
+                startcol=0,
+                index=False,
+                header=True,
+            )
+            row += len(qs.table) + 2  # відступ між блоками
+        chart = workbook.add_chart({'type': 'pie'})
+        chart.add_series({
+            'name':       [sheet_name, 0, 0],  # Назва діаграми
+            'categories': [sheet_name, 1, 0, 5, 0],  # Діапазон підписів
+            'values':     [sheet_name, 1, 1, 5, 1],  # Діапазон значень
+            })
+        ws.insert_chart('E2', chart)
+
+    output.seek(0)
+    return output.read()
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+"""
+Модуль формування Excel-звіту з результатами опитування.
+
+Застосування звітів у форматі XLSX відповідає практиці документування
+результатів соціологічних досліджень у ЗВО та вимогам внутрішніх
+систем забезпечення якості освіти.
+"""
+
+from __future__ import annotations
+
+import io
+from typing import Dict, List
+
+import pandas as pd
+
+from classification import QuestionInfo
+from summary import QuestionSummary
+
+
+def build_excel_report(
+    original_df: pd.DataFrame,
+    sliced_df: pd.DataFrame,
+    qinfo: Dict[str, QuestionInfo],
+    summaries: List[QuestionSummary],
+    range_info: str,
+) -> bytes:
+    """
+    Створює Excel-звіт та повертає його у вигляді байтів для завантаження.
+    Додає кругові діаграми для питань, що мають зведені таблиці.
+
+    :param original_df: повна таблиця відповідей.
+    :param sliced_df: вибраний користувачем діапазон.
+    :param qinfo: інформація про питання.
+    :param summaries: список зведених таблиць.
+    :param range_info: текстовий опис діапазону (для титулу).
+    """
+    output = io.BytesIO()
+
+    # Використовуємо engine="xlsxwriter", бо він підтримує створення діаграм
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        # --- 1. Технічна інформація ---
+        meta_df = pd.DataFrame(
+            {
+                "Параметр": [
+                    "Загальна кількість анкет у файлі",
+                    "Кількість анкет у вибраному діапазоні",
+                    "Діапазон обробки",
+                ],
+                "Значення": [
+                    len(original_df),
+                    len(sliced_df),
+                    range_info,
+                ],
+            }
+        )
+        meta_df.to_excel(writer, sheet_name="Технічна_інформація", index=False)
+
+        # Підлаштуємо ширину колонок для краси
+        workbook = writer.book
+        worksheet_meta = writer.sheets["Технічна_інформація"]
+        worksheet_meta.set_column("A:A", 40)
+        worksheet_meta.set_column("B:B", 50)
+
+        # --- 2. Вихідні дані (скорочено/фільтровано) ---
+        sliced_df.to_excel(writer, sheet_name="Вихідні_дані", index=False)
+
+        # --- 3. Таблиці підсумків та діаграми ---
+        sheet_name_summary = "Підсумки"
+        ws = workbook.add_worksheet(sheet_name_summary)
+        writer.sheets[sheet_name_summary] = ws
+
+        # Формат для заголовків питань
+        bold_fmt = workbook.add_format({"bold": True, "font_size": 11})
+        
+        # Задаємо ширину колонок для підсумків
+        ws.set_column("A:A", 40)  # Варіант відповіді
+        ws.set_column("B:C", 10)  # Числа та %
+
+        current_row = 0
+
+        for qs in summaries:
+            question_title = f"{qs.question.code}. {qs.question.text}"
+            
+            # 1. Записуємо назву питання
+            ws.write(current_row, 0, question_title, bold_fmt)
+            current_row += 1
+
+            # Якщо таблиця порожня (наприклад, відкрите питання або немає даних)
+            if qs.table.empty:
+                ws.write(current_row, 0, "(Немає даних для діаграми або текстове питання)")
+                current_row += 2
+                continue
+
+            # 2. Записуємо таблицю даних
+            # qs.table має колонки: ["Варіант відповіді", "Кількість", "%"]
+            # startrow=current_row, startcol=0
+            qs.table.to_excel(
+                writer,
+                sheet_name=sheet_name_summary,
+                startrow=current_row,
+                startcol=0,
+                index=False,
+                header=True,
+            )
+
+            # Визначаємо координати даних для діаграми
+            # Заголовок таблиці займає 1 рядок, тому дані починаються з current_row + 1
+            n_rows = len(qs.table)
+            first_data_row = current_row + 1
+            last_data_row = current_row + n_rows
+
+            # Колонки (0-based): A=0 (Labels), B=1 (Values)
+            
+            # 3. Створюємо діаграму
+            chart = workbook.add_chart({"type": "pie"})
+            
+            chart.add_series({
+                "name": "Кількість",
+                # [sheetname, first_row, first_col, last_row, last_col]
+                "categories": [sheet_name_summary, first_data_row, 0, last_data_row, 0],
+                "values":     [sheet_name_summary, first_data_row, 1, last_data_row, 1],
+                "data_labels": {"percentage": True},  # Показувати відсотки на діаграмі
+            })
+            
+            chart.set_title({"name": question_title})
+            chart.set_style(10)  # Стиль діаграми (можна змінювати 1-48)
+
+            # 4. Вставляємо діаграму праворуч від таблиці (наприклад, колонка E, індекс 4)
+            # Вставляємо трохи вище (на рівні заголовку питання), щоб було компактно
+            ws.insert_chart(current_row - 1, 4, chart)
+
+            # 5. Зсуваємо курсор вниз
+            # Нам треба відступити місце або під таблицю, або під діаграму (що більше)
+            # Стандартна висота діаграми ~15 рядків.
+            rows_occupied = max(n_rows + 3, 18)
+            current_row += rows_occupied
+
+    return output.getvalue()
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+"""
+Модуль формування Excel-звіту з результатами опитування.
+
+Застосування звітів у форматі XLSX відповідає практиці документування
+результатів соціологічних досліджень у ЗВО та вимогам внутрішніх
+систем забезпечення якості освіти.
+"""
+
+from __future__ import annotations
+
+import io
+from typing import Dict, List
+
+import pandas as pd
+import xlsxwriter
+
+from classification import QuestionInfo, QuestionType
+from summary import QuestionSummary
+
+
+def build_excel_report(
+    original_df: pd.DataFrame,
+    sliced_df: pd.DataFrame,
+    qinfo: Dict[str, QuestionInfo],
+    summaries: List[QuestionSummary],
+    range_info: str,
+) -> bytes:
+    """
+    Створює Excel-звіт та повертає його у вигляді байтів для завантаження.
+    Додає діаграми для візуалізації результатів.
+
+    :param original_df: повна таблиця відповідей.
+    :param sliced_df: вибраний користувачем діапазон.
+    :param qinfo: інформація про питання.
+    :param summaries: список зведених таблиць.
+    :param range_info: текстовий опис діапазону (для титулу).
+    """
+    output = io.BytesIO()
+
+    # Використовуємо engine="xlsxwriter" для можливості додавання діаграм
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        workbook = writer.book
+
+        # Стилі
+        header_fmt = workbook.add_format({"bold": True, "font_size": 11})
+        title_fmt = workbook.add_format({"bold": True, "font_size": 12, "fg_color": "#DCE6F1"})
+        
+        # ---------------------------------------------------------
+        # 1. Технічна інформація
+        # ---------------------------------------------------------
+        meta_df = pd.DataFrame(
+            {
+                "Параметр": [
+                    "Загальна кількість анкет у файлі",
+                    "Кількість анкет у вибраному діапазоні",
+                    "Діапазон обробки",
+                ],
+                "Значення": [
+                    len(original_df),
+                    len(sliced_df),
+                    range_info,
+                ],
+            }
+        )
+        meta_df.to_excel(writer, sheet_name="Технічна_інформація", index=False)
+        
+        # Автоширина колонок для технічного аркуша
+        ws_meta = writer.sheets["Технічна_інформація"]
+        ws_meta.set_column(0, 0, 40)
+        ws_meta.set_column(1, 1, 50)
+
+        # ---------------------------------------------------------
+        # 2. Вихідні дані (скорочено)
+        # ---------------------------------------------------------
+        sliced_df.to_excel(writer, sheet_name="Вихідні_дані", index=False)
+
+        # ---------------------------------------------------------
+        # 3. Таблиці підсумків та діаграми
+        # ---------------------------------------------------------
+        sheet_name = "Підсумки"
+        # Створюємо аркуш вручну, щоб отримати об'єкт worksheet
+        worksheet = workbook.add_worksheet(sheet_name)
+        writer.sheets[sheet_name] = worksheet
+
+        # Поточний рядок для запису
+        current_row = 0
+
+        for qs in summaries:
+            # -- 3.1. Заголовок питання --
+            q_title = f"{qs.question.code}. {qs.question.text}"
+            worksheet.write(current_row, 0, q_title, title_fmt)
+            current_row += 1
+
+            # Якщо таблиця порожня (наприклад, відкрите питання або немає даних)
+            if qs.table.empty:
+                worksheet.write(current_row, 0, "Немає даних для відображення або текстові відповіді.")
+                current_row += 3
+                continue
+
+            # -- 3.2. Запис таблиці даних --
+            # Використовуємо pandas to_excel для запису таблиці у конкретну позицію
+            qs.table.to_excel(
+                writer,
+                sheet_name=sheet_name,
+                startrow=current_row,
+                startcol=0,
+                index=False,
+                header=True,
+            )
+
+            # Визначаємо координати даних для діаграми
+            # Таблиця має заголовок, тому дані починаються з row+1
+            n_items = len(qs.table)
+            data_start_row = current_row + 1
+            data_end_row = current_row + n_items
+
+            # Колонки: A=0 (Варіант), B=1 (Кількість), C=2 (%)
+            # Синтаксис xlsxwriter для серій: [sheetname, first_row, first_col, last_row, last_col]
+            categories_ref = [sheet_name, data_start_row, 0, data_end_row, 0]
+            values_ref = [sheet_name, data_start_row, 1, data_end_row, 1]
+
+            # -- 3.3. Побудова діаграми --
+            # Логіка вибору типу діаграми
+            if qs.question.qtype == QuestionType.SCALE:
+                # Для шкали 1-5 краще стовпчикова
+                chart_type = 'column'
+            else:
+                # Для категорій/так-ні - кругова
+                chart_type = 'pie'
+
+            chart = workbook.add_chart({'type': chart_type})
+
+            chart.add_series({
+                'name':       'Кількість',
+                'categories': categories_ref,
+                'values':     values_ref,
+                'data_labels': {'value': True, 'percentage': (chart_type == 'pie')},
+            })
+
+            chart.set_title({'name': qs.question.code})
+            chart.set_style(10) # Приємний стиль за замовчуванням
+            
+            # Якщо діаграма стовпчикова, прибираємо легенду (вона дублює вісь X)
+            if chart_type == 'column':
+                 chart.set_legend({'position': 'none'})
+                 chart.set_x_axis({'name': 'Варіант відповіді'})
+                 chart.set_y_axis({'name': 'Кількість'})
+
+            # Вставка діаграми правіше від таблиці (наприклад, колонка E, індекс 4)
+            # Зміщення по вертикалі, щоб вирівняти з заголовком питання
+            worksheet.insert_chart(current_row - 1, 4, chart)
+
+            # -- 3.4. Оновлення лічильника рядків --
+            # Розрахунок відступу: беремо максимум між висотою таблиці та висотою діаграми
+            # Стандартна висота діаграми в Excel ~ 15 рядків
+            block_height = max(n_items + 2, 18)
+            current_row += block_height + 1  # +1 для порожнього рядка між блоками
+
+        # Встановлення ширини перших колонок для зручності
+        worksheet.set_column(0, 0, 45) # Варіант відповіді
+        worksheet.set_column(1, 2, 10) # Числа
+
+    return output.getvalue()
