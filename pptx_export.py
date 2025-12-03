@@ -1,13 +1,12 @@
 """
 Модуль експорту звіту у формат PowerPoint (.pptx).
-ВЕРСІЯ: Final Fixed (Виправлена заливка).
-- Гарантована заливка клітинок (Сіра шапка, Білі дані).
-- Чорний текст для контрасту.
-- Підтримка фонового зображення (background.png).
+ВЕРСІЯ: DIRECT ACCESS (Прямий доступ).
+- Ми не використовуємо ітератори, а звертаємось до кожної клітинки за координатами (row, col).
+- Це гарантує, що кожна клітинка отримає свої налаштування.
+- Скидання стилів таблиці, щоб дозволити ручну заливку.
 """
 
 import io
-import os
 import textwrap
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -23,12 +22,11 @@ from typing import List, Optional
 # --- НАЛАШТУВАННЯ ---
 CHART_DPI = 150
 FONT_SIZE_CHART = 11        
-FONT_SIZE_TABLE_HEADER = 12 
-FONT_SIZE_TABLE_DATA = 11   
+FONT_SIZE_HEADER = 12 
+FONT_SIZE_DATA = 11   
 BAR_WIDTH = 0.6
 
 def create_chart_image(qs: QuestionSummary) -> io.BytesIO:
-    """Генерує зображення діаграми."""
     plt.clf()
     plt.rcParams.update({'font.size': FONT_SIZE_CHART})
     
@@ -37,19 +35,16 @@ def create_chart_image(qs: QuestionSummary) -> io.BytesIO:
     wrapped_labels = [textwrap.fill(l, 25) for l in labels]
 
     if qs.question.qtype == QuestionType.SCALE:
-        # Стовпчикова
         fig = plt.figure(figsize=(6.0, 4.5))
         bars = plt.bar(wrapped_labels, values, color='#4F81BD', width=BAR_WIDTH)
         plt.ylabel('Кількість')
         plt.grid(axis='y', linestyle='--', alpha=0.5)
         plt.xticks(rotation=0)
-        
         for bar in bars:
             height = bar.get_height()
             plt.text(bar.get_x() + bar.get_width()/2., height + 0.1,
                      f'{int(height)}', ha='center', va='bottom', fontweight='bold')
     else:
-        # Кругова
         fig = plt.figure(figsize=(6.0, 5.0))
         colors = ['#4F81BD', '#C0504D', '#9BBB59', '#8064A2', '#4BACC6', '#F79646']
         c_arg = colors[:len(values)] if len(values) <= len(colors) else None
@@ -86,7 +81,7 @@ def build_pptx_report(
     
     prs = Presentation()
 
-    # --- ВСТАНОВЛЕННЯ ФОНУ ---
+    # --- ФОН ---
     if background_image_path and os.path.exists(background_image_path):
         for master in prs.slide_masters:
             try:
@@ -127,6 +122,7 @@ def build_pptx_report(
         
         slide = prs.slides.add_slide(prs.slide_layouts[layout_index])
         
+        # Заголовок
         try:
             title = slide.shapes.title
             title.text = f"{qs.question.code}. {qs.question.text}"
@@ -136,52 +132,73 @@ def build_pptx_report(
                 title.text_frame.paragraphs[0].font.size = Pt(32)
         except: pass
 
-        # --- ТАБЛИЦЯ ---
+        # === ТАБЛИЦЯ (Ручне створення) ===
         rows = len(qs.table) + 1
         cols = 3
-        table = slide.shapes.add_table(rows, cols, Inches(0.5), Inches(2.0), Inches(4.5), Inches(0.8)).table
+        
+        table_shape = slide.shapes.add_table(rows, cols, Inches(0.5), Inches(2.0), Inches(4.5), Inches(0.8))
+        table = table_shape.table
+        
+        # ВАЖЛИВО: Скидаємо стиль таблиці, щоб працювала ручна заливка
+        # (У деяких версіях pptx це допомагає)
+        # table.table_style_id = None 
 
+        # Ширина
         table.columns[0].width = Inches(2.5)
         table.columns[1].width = Inches(1.0)
         table.columns[2].width = Inches(1.0)
 
-        # === ХЕДЕР (Сірий фон) ===
+        # --- ЗАПОВНЮЄМО ЗАГОЛОВОК (Рядок 0) ---
         headers = ["Варіант", "Кільк.", "%"]
-        for i, h in enumerate(headers):
-            cell = table.cell(0, i)
-            cell.text = h
+        for col_idx in range(3):
+            cell = table.cell(0, col_idx)
+            cell.text = headers[col_idx]
             
             # Шрифт
-            paragraph = cell.text_frame.paragraphs[0]
-            paragraph.font.bold = True
-            paragraph.font.size = Pt(FONT_SIZE_TABLE_HEADER)
-            paragraph.font.color.rgb = RGBColor(0, 0, 0) # Чорний текст
+            p = cell.text_frame.paragraphs[0]
+            p.font.bold = True
+            p.font.size = Pt(FONT_SIZE_HEADER)
+            p.font.color.rgb = RGBColor(0, 0, 0) # Чорний
+            p.alignment = PP_ALIGN.CENTER
             
-            # Заливка (Сіра)
+            # Заливка (СІРА)
             cell.fill.solid()
             cell.fill.fore_color.rgb = RGBColor(220, 220, 220)
 
-        # === ДАНІ (Білий фон) - Виправлений цикл ===
-        for i, row in enumerate(qs.table.itertuples(index=False)):
-            # Внутрішній цикл по колонках (0=Варіант, 1=Кількість, 2=Відсоток)
-            for j, val in enumerate(row):
-                cell = table.cell(i+1, j)
-                cell.text = str(val)
-                
-                # Шрифт
-                paragraph = cell.text_frame.paragraphs[0]
-                paragraph.font.size = Pt(FONT_SIZE_TABLE_DATA)
-                paragraph.font.color.rgb = RGBColor(0, 0, 0) # Чорний текст
-                
-                # Вирівнювання (числа по центру)
-                if j > 0:
-                    paragraph.alignment = PP_ALIGN.CENTER
-                else:
-                    paragraph.alignment = PP_ALIGN.LEFT
-                
-                # Заливка (Біла) - застосовується до кожної клітинки
-                cell.fill.solid()
-                cell.fill.fore_color.rgb = RGBColor(255, 255, 255)
+        # --- ЗАПОВНЮЄМО ДАНІ (Рядки 1+) ---
+        # Перетворюємо дані в список списків для надійного доступу за індексом
+        data_values = qs.table.values.tolist()
+        
+        for row_idx, row_data in enumerate(data_values):
+            # row_idx в списку даних починається з 0, але в таблиці це рядок row_idx + 1 (бо 0 це хедер)
+            table_row_idx = row_idx + 1
+            
+            # Колонка 0: Варіант
+            cell = table.cell(table_row_idx, 0)
+            cell.text = str(row_data[0])
+            cell.text_frame.paragraphs[0].font.size = Pt(FONT_SIZE_DATA)
+            cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 0, 0)
+            cell.text_frame.paragraphs[0].alignment = PP_ALIGN.LEFT
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = RGBColor(255, 255, 255) # БІЛИЙ
+
+            # Колонка 1: Кількість
+            cell = table.cell(table_row_idx, 1)
+            cell.text = str(row_data[1])
+            cell.text_frame.paragraphs[0].font.size = Pt(FONT_SIZE_DATA)
+            cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 0, 0)
+            cell.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = RGBColor(255, 255, 255) # БІЛИЙ
+
+            # Колонка 2: Відсоток
+            cell = table.cell(table_row_idx, 2)
+            cell.text = str(row_data[2])
+            cell.text_frame.paragraphs[0].font.size = Pt(FONT_SIZE_DATA)
+            cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 0, 0)
+            cell.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = RGBColor(255, 255, 255) # БІЛИЙ
 
         # --- ДІАГРАМА ---
         try:
