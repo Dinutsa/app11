@@ -1,9 +1,9 @@
 """
 Модуль експорту звіту у формат PowerPoint (.pptx).
-ВЕРСІЯ: Стандартна (як у першому варіанті).
-- Таблиці формуються стандартними засобами (без XML-хаків для меж).
-- Підтримка фонового зображення (background.png).
-- Чіткі шрифти та відступи.
+ВЕРСІЯ: Оригінальна (Classic).
+- Таблиці без примусових чорних рамок (виглядають чисто і акуратно).
+- Стиль: Сіра шапка, білий фон даних.
+- Підтримка фонового зображення збережена.
 """
 
 import io
@@ -22,9 +22,9 @@ from typing import List, Optional
 
 # --- НАЛАШТУВАННЯ ---
 CHART_DPI = 150
-FONT_SIZE_CHART = 12
-FONT_SIZE_TABLE_HEADER = 12
-FONT_SIZE_TABLE_DATA = 11
+FONT_SIZE_CHART = 11        # Оптимальний розмір для діаграм
+FONT_SIZE_TABLE_HEADER = 12 # Заголовки таблиці
+FONT_SIZE_TABLE_DATA = 11   # Дані таблиці
 BAR_WIDTH = 0.6
 
 # --- ГЕНЕРАЦІЯ ДІАГРАМ ---
@@ -88,7 +88,6 @@ def build_pptx_report(
 
     # --- ВСТАНОВЛЕННЯ ФОНУ ---
     if background_image_path and os.path.exists(background_image_path):
-        # Ставимо фон для всіх майстрів і їх макетів
         for master in prs.slide_masters:
             try:
                 master.background.fill.user_picture(background_image_path)
@@ -98,7 +97,7 @@ def build_pptx_report(
                     except: pass
             except: pass
 
-    # 1. ТИТУЛЬНИЙ СЛАЙД
+    # 1. Титульний слайд
     slide_layout = prs.slide_layouts[0] 
     slide = prs.slides.add_slide(slide_layout)
     try:
@@ -106,7 +105,7 @@ def build_pptx_report(
         slide.placeholders[1].text = f"Всього анкет: {len(original_df)}\nОброблено: {len(sliced_df)}\n{range_info}"
     except: pass
 
-    # 2. ТЕХНІЧНА ІНФОРМАЦІЯ
+    # 2. Технічна інформація
     slide_layout = prs.slide_layouts[1] 
     slide = prs.slides.add_slide(slide_layout)
     try:
@@ -126,8 +125,7 @@ def build_pptx_report(
             p.level = 0
     except: pass
 
-    # 3. СЛАЙДИ З ПИТАННЯМИ
-    # Вибираємо макет "Title Only" (зазвичай індекс 5)
+    # 3. Слайди з даними
     layout_index = 5 
     if len(prs.slide_layouts) <= 5: layout_index = len(prs.slide_layouts) - 1
     
@@ -136,11 +134,10 @@ def build_pptx_report(
         
         slide = prs.slides.add_slide(prs.slide_layouts[layout_index])
         
-        # Заголовок слайда
+        # Заголовок
         try:
             title = slide.shapes.title
             title.text = f"{qs.question.code}. {qs.question.text}"
-            # Адаптація розміру шрифту для довгих заголовків
             if len(title.text) > 60:
                 title.text_frame.paragraphs[0].font.size = Pt(24)
             else:
@@ -150,42 +147,41 @@ def build_pptx_report(
         # --- ТАБЛИЦЯ (Зліва) ---
         rows = len(qs.table) + 1
         cols = 3
-        # Позиція і розмір
+        
         left = Inches(0.5)
         top = Inches(2.0)
         width = Inches(4.5)
-        height = Inches(0.8) # Мінімальна висота, вона розтягнеться
+        height = Inches(0.8)
 
         table = slide.shapes.add_table(rows, cols, left, top, width, height).table
 
         # Ширина колонок
-        table.columns[0].width = Inches(2.5) # Варіант
-        table.columns[1].width = Inches(1.0) # Кількість
-        table.columns[2].width = Inches(1.0) # %
+        table.columns[0].width = Inches(2.5)
+        table.columns[1].width = Inches(1.0)
+        table.columns[2].width = Inches(1.0)
 
-        # ХЕДЕР ТАБЛИЦІ
+        # ХЕДЕР
         headers = ["Варіант", "Кільк.", "%"]
         for i, h in enumerate(headers):
             cell = table.cell(0, i)
             cell.text = h
-            # Стиль: Жирний, 12pt
             cell.text_frame.paragraphs[0].font.bold = True
             cell.text_frame.paragraphs[0].font.size = Pt(FONT_SIZE_TABLE_HEADER)
-            # Фон заголовка: Світло-сірий
+            
+            # Фон заголовка: Світло-сірий (класичний вигляд)
             cell.fill.solid()
-            cell.fill.fore_color.rgb = RGBColor(240, 240, 240) 
-            # Колір тексту: Чорний
+            cell.fill.fore_color.rgb = RGBColor(240, 240, 240)
             cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 0, 0)
 
-        # ДАНІ ТАБЛИЦІ
+        # ДАНІ
         for i, row in enumerate(qs.table.itertuples(index=False)):
             # Варіант
             cell = table.cell(i+1, 0)
             cell.text = str(row[0])
             cell.text_frame.paragraphs[0].font.size = Pt(FONT_SIZE_TABLE_DATA)
-            # Фон: Білий
+            # Фон: Білий (щоб читалось на будь-якій картинці)
             cell.fill.solid()
-            cell.fill.fore_color.rgb = RGBColor(255, 255, 255) 
+            cell.fill.fore_color.rgb = RGBColor(255, 255, 255)
             
             # Кількість
             cell = table.cell(i+1, 1)
@@ -206,7 +202,6 @@ def build_pptx_report(
         # --- ДІАГРАМА (Справа) ---
         try:
             img_stream = create_chart_image(qs)
-            # Вставляємо картинку правіше таблиці
             slide.shapes.add_picture(img_stream, Inches(5.2), Inches(2.0), width=Inches(4.6))
         except: pass
 
