@@ -180,7 +180,7 @@ def build_pptx_report(
             cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 0, 0)
             cell.text_frame.paragraphs[0].alignment = PP_ALIGN.LEFT
             cell.fill.solid()
-            cell.fill.fore_color.rgb = RGBColor(255, 255, 255) # БІЛИЙ
+            cell.fill.fore_color.rgb = RGBColor(230, 230, 230) # БІЛИЙ
 
             # Колонка 1: Кількість
             cell = table.cell(table_row_idx, 1)
@@ -189,7 +189,7 @@ def build_pptx_report(
             cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 0, 0)
             cell.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
             cell.fill.solid()
-            cell.fill.fore_color.rgb = RGBColor(255, 255, 255) # БІЛИЙ
+            cell.fill.fore_color.rgb = RGBColor(230, 230, 230) # БІЛИЙ
 
             # Колонка 2: Відсоток
             cell = table.cell(table_row_idx, 2)
@@ -198,7 +198,7 @@ def build_pptx_report(
             cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 0, 0)
             cell.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
             cell.fill.solid()
-            cell.fill.fore_color.rgb = RGBColor(255, 255, 255) # БІЛИЙ
+            cell.fill.fore_color.rgb = RGBColor(230, 230, 230) # БІЛИЙ
 
         # --- ДІАГРАМА ---
         try:
