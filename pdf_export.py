@@ -229,7 +229,7 @@ class PDFReport(FPDF):
                          f'{int(height)}', ha='center', va='bottom', fontweight='bold')
         else:
             # --- КРУГОВА: ВИСОКА ---
-            plt.figure(figsize=(5, 4))
+            plt.figure(figsize=(9, 7))
             
             colors = ['#4F81BD', '#C0504D', '#9BBB59', '#8064A2', '#4BACC6', '#F79646']
             c_arg = colors[:len(values)] if len(values) <= len(colors) else None
