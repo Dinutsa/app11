@@ -1,9 +1,9 @@
 """
 Модуль експорту звіту у формат PowerPoint (.pptx).
-Оновлено:
-- Виправлено відображення рамок (використано надійніший метод XML).
-- Рамки зроблено трохи товстішими (1.5pt) для кращої видимості.
-- Шрифти та відступи оптимізовано.
+Версія: "Класична".
+- Таблиці створюються стандартним методом (без примусових рамок XML).
+- Збережено підтримку фонового зображення.
+- Збережено великі шрифти.
 """
 
 import io
@@ -16,9 +16,6 @@ from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 
-# --- ІМПОРТИ ДЛЯ XML (ВАЖЛИВО) ---
-from pptx.oxml.xmlchemy import OxmlElement
-
 from classification import QuestionInfo, QuestionType
 from summary import QuestionSummary
 from typing import List, Optional
@@ -30,44 +27,6 @@ FONT_SIZE_TABLE_HEADER = 12
 FONT_SIZE_TABLE_DATA = 11
 BAR_WIDTH = 0.6
 
-# --- ФУНКЦІЇ ДЛЯ РАМОК (XML HACK) ---
-
-def SubElement(parent, tagname, **kwargs):
-    """Створює XML-елемент сумісний з python-pptx"""
-    element = OxmlElement(tagname)
-    element.attrib.update(kwargs)
-    parent.append(element)
-    return element
-
-def set_cell_border(cell, border_color="000000", border_width='19050'):
-    """
-    Малює рамки навколо клітинки.
-    border_width: '12700' = 1pt, '19050' = 1.5pt (товстіша)
-    """
-    tc = cell._tc
-    tcPr = tc.get_or_add_tcPr()
-    
-    # Визначаємо сторони рамки
-    lines = [('a:lnL', border_width), ('a:lnR', border_width), 
-             ('a:lnT', border_width), ('a:lnB', border_width)]
-    
-    for line_tag, w in lines:
-        # Створюємо лінію
-        ln = SubElement(tcPr, line_tag, w=w, cap='flat', cmpd='sng', algn='ctr')
-        
-        # Заливка лінії (чорна)
-        solidFill = SubElement(ln, 'a:solidFill')
-        srgbClr = SubElement(solidFill, 'a:srgbClr', val=border_color)
-        
-        # Стиль лінії (суцільна)
-        prstDash = SubElement(ln, 'a:prstDash', val='solid')
-        
-        # Додаткові параметри (для коректного рендерингу в PowerPoint)
-        SubElement(ln, 'a:round')
-        SubElement(ln, 'a:headEnd', type='none', w='med', len='med')
-        SubElement(ln, 'a:tailEnd', type='none', w='med', len='med')
-
-# --- ГЕНЕРАЦІЯ ДІАГРАМ ---
 def create_chart_image(qs: QuestionSummary) -> io.BytesIO:
     plt.clf()
     plt.rcParams.update({'font.size': FONT_SIZE_CHART})
@@ -81,7 +40,8 @@ def create_chart_image(qs: QuestionSummary) -> io.BytesIO:
         bars = plt.bar(wrapped_labels, values, color='#4F81BD', width=BAR_WIDTH)
         plt.ylabel('Кількість')
         plt.grid(axis='y', linestyle='--', alpha=0.5)
-        plt.xticks(rotation=0)
+        plt.xticks(rotation=0, fontsize=FONT_SIZE_CHART)
+        plt.yticks(fontsize=FONT_SIZE_CHART)
         
         for bar in bars:
             height = bar.get_height()
@@ -126,7 +86,7 @@ def build_pptx_report(
     
     prs = Presentation()
 
-    # --- ФОН ---
+    # --- ВСТАНОВЛЕННЯ ФОНУ ---
     if background_image_path and os.path.exists(background_image_path):
         for master in prs.slide_masters:
             try:
@@ -142,6 +102,7 @@ def build_pptx_report(
         title = slide.shapes.title
         title.text = "Звіт про результати опитування"
     except: pass
+    
     try:
         if len(slide.placeholders) > 1:
             subtitle = slide.placeholders[1]
@@ -205,12 +166,10 @@ def build_pptx_report(
             cell.text_frame.paragraphs[0].font.bold = True
             cell.text_frame.paragraphs[0].font.size = Pt(FONT_SIZE_TABLE_HEADER)
             
+            # Стиль заголовка: Світло-сірий фон
             cell.fill.solid()
             cell.fill.fore_color.rgb = RGBColor(230, 230, 230)
             cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 0, 0)
-            
-            # РАМКА ДЛЯ ХЕДЕРА
-            set_cell_border(cell, border_width='19050')
 
         for i, row in enumerate(qs.table.itertuples(index=False)):
             # Варіант
@@ -218,8 +177,6 @@ def build_pptx_report(
             cell.text = str(row[0])
             cell.text_frame.paragraphs[0].font.size = Pt(FONT_SIZE_TABLE_DATA)
             cell.fill.solid(); cell.fill.fore_color.rgb = RGBColor(255, 255, 255)
-            # РАМКА
-            set_cell_border(cell, border_width='19050')
             
             # Кільк.
             cell = table.cell(i+1, 1)
@@ -227,8 +184,6 @@ def build_pptx_report(
             cell.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
             cell.text_frame.paragraphs[0].font.size = Pt(FONT_SIZE_TABLE_DATA)
             cell.fill.solid(); cell.fill.fore_color.rgb = RGBColor(255, 255, 255)
-            # РАМКА
-            set_cell_border(cell, border_width='19050')
             
             # %
             cell = table.cell(i+1, 2)
@@ -236,8 +191,6 @@ def build_pptx_report(
             cell.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
             cell.text_frame.paragraphs[0].font.size = Pt(FONT_SIZE_TABLE_DATA)
             cell.fill.solid(); cell.fill.fore_color.rgb = RGBColor(255, 255, 255)
-            # РАМКА
-            set_cell_border(cell, border_width='19050')
 
         # --- ДІАГРАМА ---
         try:
