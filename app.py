@@ -98,7 +98,7 @@ if st.session_state.processed and st.session_state.sliced is not None:
     with tab1:
         st.info(f"**Відображається {len(sliced)} анкет** (рядки {st.session_state.from_row}-{st.session_state.to_row})")
         
-        # 1. ПЕРЕГЛЯД ВИХІДНИХ ДАНИХ (Повернуто на прохання)
+        # 1. ПЕРЕГЛЯД ВИХІДНИХ ДАНИХ
         with st.expander("🔍 Перегляд вихідних даних (таблиця)", expanded=False):
             st.dataframe(sliced)
         
@@ -121,12 +121,12 @@ if st.session_state.processed and st.session_state.sliced is not None:
                 col_chart, col_table = st.columns([1.5, 1])
                 
                 with col_chart:
-                    # ПОВНА КРУГОВА ДІАГРАМА (hole=0)
+                    # ПОВНА КРУГОВА ДІАГРАМА
                     fig = px.pie(
                         selected.table,
                         names="Варіант відповіді",
                         values="Кількість",
-                        hole=0, # Повне коло, не пончик
+                        hole=0, 
                         title="Розподіл відповідей"
                     )
                     st.plotly_chart(fig, use_container_width=True)
@@ -135,12 +135,11 @@ if st.session_state.processed and st.session_state.sliced is not None:
                     st.write("Таблиця частот:")
                     st.dataframe(selected.table, use_container_width=True)
 
-        # 3. ПОВНИЙ СПИСОК УСІХ ПИТАНЬ (Нова секція знизу)
+        # 3. ПОВНИЙ СПИСОК УСІХ ПИТАНЬ
         st.divider()
         st.subheader("📋 Повний огляд всіх питань")
         
         for qs in summaries:
-            # Пропускаємо порожні або відкриті питання без таблиці
             if qs.table.empty:
                 continue
                 
@@ -165,22 +164,19 @@ if st.session_state.processed and st.session_state.sliced is not None:
         st.subheader("Експорт результатів")
         range_info = f"Рядки {st.session_state.from_row}–{st.session_state.to_row} (усього {len(sliced)} анкет)"
         
-        with st.expander("Налаштування PowerPoint (Тема та Шаблон)"):
-            custom_topic = st.text_input("Заголовок звіту", value="Звіт про результати опитування")
-            uploaded_template = st.file_uploader(
-                "Завантажити шаблон дизайну (.pptx)", 
-                type="pptx", 
-                help="Завантажте порожню презентацію з потрібним вам дизайном."
-            )
+        # --- ВКАЗІВКА ЩОДО ФОНУ ---
+        if os.path.exists("background.png"):
+            st.success("✅ Знайдено файл фону 'background.png'. Презентація буде створена з цим дизайном.")
+        else:
+            st.info("ℹ️ Файл 'background.png' не знайдено. Презентація буде на білому фоні. Завантажте картинку в папку проєкту, щоб змінити фон.")
 
         # Функції з кешуванням
         @st.cache_data(show_spinner="Генеруємо PowerPoint...")
-        def get_pptx_data(_original_df, _sliced_df, _summaries, _range_info, _topic, _template_bytes):
-            template_stream = io.BytesIO(_template_bytes) if _template_bytes else None
+        def get_pptx_data(_original_df, _sliced_df, _summaries, _range_info):
+            # Фон береться з файлу "background.png", якщо він є
             return build_pptx_report(
                 _original_df, _sliced_df, _summaries, _range_info, 
-                report_title=_topic, 
-                template_file=template_stream
+                background_image_path="background.png"
             )
 
         @st.cache_data(show_spinner="Генеруємо Excel...")
@@ -226,16 +222,9 @@ if st.session_state.processed and st.session_state.sliced is not None:
             if st.button("🖥️ PPTX звіт"):
                 with st.spinner("Генеруємо PowerPoint..."):
                     try:
-                        final_template_bytes = None
-                        if uploaded_template is not None:
-                            final_template_bytes = uploaded_template.getvalue()
-                        elif os.path.exists("template.pptx"):
-                            with open("template.pptx", "rb") as f:
-                                final_template_bytes = f.read()
-
                         pptx_bytes = get_pptx_data(
                             st.session_state.ld.df, st.session_state.sliced, st.session_state.summaries, 
-                            range_info, _topic=custom_topic, _template_bytes=final_template_bytes
+                            range_info
                         )
                         st.download_button("📥 Завантажити PPTX", pptx_bytes, "survey_results.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation")
                     except Exception as e:
