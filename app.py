@@ -161,23 +161,13 @@ if st.session_state.processed and st.session_state.sliced is not None:
 
     # ---------------- ВКЛАДКА ЕКСПОРТУ ----------------
     with tab2:
-        st.subheader("Експорт результатів")
-        range_info = f"Рядки {st.session_state.from_row}–{st.session_state.to_row} (усього {len(sliced)} анкет)"
-        
-        # --- ВКАЗІВКА ЩОДО ФОНУ ---
-        if os.path.exists("background.png"):
-            st.success("✅ Знайдено файл фону 'background.png'. Презентація буде створена з цим дизайном.")
-        else:
-            st.info("ℹ️ Файл 'background.png' не знайдено. Презентація буде на білому фоні. Завантажте картинку в папку проєкту, щоб змінити фон.")
+        # --- (В кінці файлу app.py) ---
 
         # Функції з кешуванням
         @st.cache_data(show_spinner="Генеруємо PowerPoint...")
         def get_pptx_data(_original_df, _sliced_df, _summaries, _range_info):
-            # Фон береться з файлу "background.png", якщо він є
-            return build_pptx_report(
-                _original_df, _sliced_df, _summaries, _range_info, 
-                background_image_path="background.png"
-            )
+            # Викликаємо без аргументів фону/теми
+            return build_pptx_report(_original_df, _sliced_df, _summaries, _range_info)
 
         @st.cache_data(show_spinner="Генеруємо Excel...")
         def get_excel_data(_original_df, _sliced_df, _qinfo, _summaries, _range_info):
@@ -222,12 +212,8 @@ if st.session_state.processed and st.session_state.sliced is not None:
             if st.button("🖥️ PPTX звіт"):
                 with st.spinner("Генеруємо PowerPoint..."):
                     try:
-                        pptx_bytes = get_pptx_data(
-                            st.session_state.ld.df, st.session_state.sliced, st.session_state.summaries, 
-                            range_info
-                        )
+                        # Просто викликаємо функцію
+                        pptx_bytes = get_pptx_data(st.session_state.ld.df, st.session_state.sliced, st.session_state.summaries, range_info)
                         st.download_button("📥 Завантажити PPTX", pptx_bytes, "survey_results.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation")
                     except Exception as e:
                         st.error(f"Error PPTX: {e}")
-else:
-    st.info("Будь ласка, завантажте файл(и) Excel у бічній панелі.")
