@@ -13,15 +13,17 @@
 соціологічних досліджень та потребам систем внутрішнього забезпечення
 якості освіти ЗВО.
 """
-# app.py
 import io
+import os
 import streamlit as st
 import plotly.express as px
 import pandas as pd
 
+# Імпорти ваших модулів (переконайтеся, що файли існують)
 from data_loader import load_excels, get_row_bounds, slice_range
 from classification import classify_questions, QuestionType
 from summary import build_all_summaries
+
 from excel_export import build_excel_report
 from pdf_export import build_pdf_report
 from docx_export import build_docx_report
@@ -32,337 +34,226 @@ st.set_page_config(
     layout="wide",
 )
 
-# ----------------- допоміжні функції -----------------
-
 def init_state():
     defaults = {
-        "uploaded_files_store": None,  # [{"name":..., "bytes":...}, ...]
+        "uploaded_files_store": None,
         "ld": None,
         "sliced": None,
         "qinfo": None,
         "summaries": None,
         "processed": False,
         "selected_code": None,
-        "from_row": None,
-        "to_row": None,
-        "uploaded_names_snapshot": None,  # для порівняння, чи файли змінились
+        "from_row": 0,
+        "to_row": 0,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
-def store_uploaded_files(uploaded_files):
-    """
-    Зчитати байти з UploadedFile і зберегти в session_state.
-    """
-    if not uploaded_files:
-        return
-    store = []
-    names = []
-    for f in uploaded_files:
-        try:
-            b = f.read()
-            name = getattr(f, "name", None) or "file"
-            store.append({"name": name, "bytes": b})
-            names.append(name)
-        except Exception as e:
-            st.error(f"Не вдалося зчитати файл {getattr(f,'name','')}: {e}")
-            return
-    st.session_state.uploaded_files_store = store
-    st.session_state.uploaded_names_snapshot = names
+init_state()
 
-def get_uploaded_files_from_store():
-    """
-    Повернути список file-like об'єктів (BytesIO) для load_excels.
-    """
-    if not st.session_state.uploaded_files_store:
-        return None
-    objs = []
-    for item in st.session_state.uploaded_files_store:
-        bio = io.BytesIO(item["bytes"])
-        bio.name = item["name"]
-        objs.append(bio)
-    return objs
+st.title("Аналіз результатів опитувань (Google Forms)")
 
-def clear_processing_state(keep_files=True):
-    """
-    Очищає оброблені результати; якщо keep_files=False, то також очищає збережені файли.
-    """
-    st.session_state.ld = None
-    st.session_state.sliced = None
-    st.session_state.qinfo = None
-    st.session_state.summaries = None
-    st.session_state.processed = False
-    st.session_state.selected_code = None
-    st.session_state.from_row = None
-    st.session_state.to_row = None
-    if not keep_files:
-        st.session_state.uploaded_files_store = None
-        st.session_state.uploaded_names_snapshot = None
-
-def process_range_from_store(from_row: int, to_row: int):
-    """
-    Виконує обробку на базі байтів з uploaded_files_store.
-    """
-    files_for_load = get_uploaded_files_from_store()
-    if not files_for_load:
-        raise ValueError("Немає збережених файлів для обробки.")
-    ld = load_excels(files_for_load)
-    sliced = slice_range(ld, int(from_row), int(to_row))
-    qinfo = classify_questions(sliced, technical_columns=1)
-    summaries = build_all_summaries(sliced, qinfo)
-
-    st.session_state.ld = ld
-    st.session_state.sliced = sliced
-    st.session_state.qinfo = qinfo
-    st.session_state.summaries = summaries
-    st.session_state.processed = True
-    st.session_state.from_row = int(from_row)
-    st.session_state.to_row = int(to_row)
-
-    codes = [qs.question.code for qs in summaries]
-    st.session_state.selected_code = codes[0] if codes else None
-
-# ----------------- UI -----------------
-
-def main():
-    init_state()
-
-    st.title("Система обробки результатів студентських опитувань")
-    # повертаємо допоміжний опис (той самий, що був раніше)
-    st.markdown(
-        """
-        Цей веб-застосунок призначений для аналізу результатів опитувань,
-        проведених за допомогою Google Forms. Завантажте один або кілька
-        файлів Excel, оберіть діапазон рядків і натисніть «Обробити діапазон».
-        Після обробки ви зможете вибирати питання для перегляду таблиці
-        та діаграми без повторної обробки.
-        """
-    )
-
-    st.sidebar.header("Налаштування аналізу")
-
-    uploaded_files = st.sidebar.file_uploader(
-        "Завантажте файл(и) Excel з відповідями",
+# --- БІЧНА ПАНЕЛЬ ---
+with st.sidebar:
+    st.header("1. Завантаження даних")
+    uploaded_files = st.file_uploader(
+        "Оберіть Excel-файли (.xlsx)",
         type=["xlsx"],
-        accept_multiple_files=True,
-        help="Підтримується кілька файлів Google Forms; вони будуть об'єднані."
+        accept_multiple_files=True
     )
 
-    # Кнопки: обробити та скидання
-    process_button = st.sidebar.button("Обробити діапазон")
-    reset_button = st.sidebar.button("Скинути обробку")
-
-    # Обробка нового завантаження: якщо користувач обрав файли у file_uploader,
-    # імена відрізняються від snapshot -> зберегти байти і скинути попередню обробку
     if uploaded_files:
-        names_now = [getattr(f, "name", "") for f in uploaded_files]
-        if st.session_state.uploaded_names_snapshot != names_now:
-            store_uploaded_files(uploaded_files)
-            # після зміни файлів потрібно очистити оброблені результати
-            clear_processing_state(keep_files=True)
+        if st.button("Обробити файли"):
+            try:
+                ld = load_excels(uploaded_files)
+                st.session_state.ld = ld
+                st.session_state.uploaded_files_store = uploaded_files
+                
+                # Початкові межі
+                min_r, max_r = get_row_bounds(ld)
+                st.session_state.from_row = min_r
+                st.session_state.to_row = max_r
+                
+                st.session_state.processed = True
+                st.success(f"Завантажено: {ld.n_rows} анкет, {ld.n_cols} стовпців.")
+            except Exception as e:
+                st.error(f"Помилка: {e}")
 
-    # Якщо немає збережених файлів у сесії — підказка і вихід
-    if not st.session_state.uploaded_files_store:
-        st.info("Завантажте хоча б один файл Excel у боковій панелі, щоб розпочати аналіз.")
-        return
-
-    # Показати короткий огляд (якщо вже оброблено раніше)
     if st.session_state.processed and st.session_state.ld:
-        ld = st.session_state.ld
-        st.subheader("Короткий огляд останньо оброблених відповідей")
-        st.write(f"Кількість рядків: **{ld.n_rows}**, стовпців: **{ld.n_cols}**")
-        st.dataframe(ld.df.head())
-
-        # для зручності даємо можливість змінити діапазон (але обробка відбудеться лише по натисканню)
-        min_row, max_row = get_row_bounds(ld)
-        from_row = st.sidebar.number_input(
-            "Від (рядок)", min_value=min_row, max_value=max_row,
-            value=st.session_state.from_row or min_row, step=1
-        )
-        to_row = st.sidebar.number_input(
-            "До (рядок)", min_value=min_row, max_value=max_row,
-            value=st.session_state.to_row or max_row, step=1
-        )
-
-        if process_button:
-            try:
-                process_range_from_store(from_row, to_row)
-                st.success("Обробку завершено.")
-            except Exception as e:
-                st.error(f"Помилка обробки: {e}")
-                return
-
-    else:
-        # якщо ще не обробляли — тимчасово прочитати файли, щоб показати допустимі межі
-        try:
-            tmp_objs = get_uploaded_files_from_store()
-            tmp_ld = load_excels(tmp_objs)
-            min_row, max_row = get_row_bounds(tmp_ld)
-        except Exception as e:
-            st.error(f"Помилка читання файлів: {e}")
-            return
-
-        from_row = st.sidebar.number_input("Від (рядок)", min_value=min_row, max_value=max_row, value=min_row, step=1)
-        to_row = st.sidebar.number_input("До (рядок)", min_value=min_row, max_value=max_row, value=max_row, step=1)
-
-        if process_button:
-            try:
-                process_range_from_store(from_row, to_row)
-                st.success("Обробку завершено.")
-            except Exception as e:
-                st.error(f"Помилка обробки: {e}")
-                return
-        else:
-            st.info("Оберіть діапазон та натисніть «Обробити діапазон».")
-
-    # Кнопка reset очищує лише обробку (або можна змінити, щоб очищати і файли)
-    if reset_button:
-        clear_processing_state(keep_files=False)
-        st.success("Обробку скинуто. Можна обрати новий діапазон або завантажити інші файли.")
-        st.rerun()
-
-    # --- Після успішної обробки показуємо результати ---
-    if st.session_state.processed:
-        summaries = st.session_state.summaries or []
-        qinfo = st.session_state.qinfo or {}
-        sliced = st.session_state.sliced
-
-        st.subheader("Класифікація запитань")
-        q_table = pd.DataFrame(
-            [
-                {"Код": info.code, "Назва стовпця": col, "Тип": info.qtype.value}
-                for col, info in qinfo.items()
-                if info.qtype != QuestionType.TECHNICAL
-            ]
-        )
-        st.dataframe(q_table)
-
-        st.subheader("Таблиці відповідей за всіма запитаннями")
-        for qs in summaries:
-            with st.expander(f"{qs.question.code}. {qs.question.text}"):
-                st.dataframe(qs.table)
-
-        # вибір питання для діаграми — використовуємо session_state.selected_code
-        st.subheader("Окреме питання (діаграма)")
-
-        available_codes = [qs.question.code for qs in summaries]
-        if not available_codes:
-            st.warning("Немає запитань з варіантами для побудови діаграм.")
-        else:
-            # встановлюємо індекс для selectbox згідно з останнім обраним кодом
-            default_index = 0
-            if st.session_state.selected_code and st.session_state.selected_code in available_codes:
-                default_index = available_codes.index(st.session_state.selected_code)
-
-            selected_code = st.selectbox(
-                "Оберіть код питання:",
-                options=available_codes,
-                index=default_index,
-                key="select_question_box"
+        st.divider()
+        st.header("2. Фільтрація")
+        
+        min_r, max_r = get_row_bounds(st.session_state.ld)
+        if max_r > min_r:
+            r_range = st.slider(
+                "Діапазон рядків (Excel)",
+                min_value=min_r,
+                max_value=max_r,
+                value=(st.session_state.from_row, st.session_state.to_row)
             )
+            st.session_state.from_row = r_range[0]
+            st.session_state.to_row = r_range[1]
+        
+        # Оновлення даних при зміні слайдера
+        sliced = slice_range(st.session_state.ld, st.session_state.from_row, st.session_state.to_row)
+        st.session_state.sliced = sliced
+        
+        # Класифікація та підсумки
+        qinfo = classify_questions(sliced)
+        st.session_state.qinfo = qinfo
+        
+        summaries = build_all_summaries(sliced, qinfo)
+        st.session_state.summaries = summaries
 
-            # зберегти вибір у сесії, але не тригерити повторну обробку
+# --- ОСНОВНА ЧАСТИНА ---
+if st.session_state.processed and st.session_state.sliced is not None:
+    sliced = st.session_state.sliced
+    summaries = st.session_state.summaries
+    
+    tab1, tab2 = st.tabs(["📊 Аналіз", "📥 Експорт"])
+    
+    with tab1:
+        st.write(f"**Відображається {len(sliced)} анкет** (рядки {st.session_state.from_row}-{st.session_state.to_row})")
+        
+        # Вибір питання
+        options = [qs.question.code for qs in summaries]
+        selected_code = st.selectbox("Оберіть питання для перегляду:", options)
+        
+        if selected_code:
             st.session_state.selected_code = selected_code
-
             selected = next((qs for qs in summaries if qs.question.code == st.session_state.selected_code), None)
 
             if selected is None or selected.table.empty:
                 st.warning("Для цього питання немає даних для побудови діаграми.")
             else:
-                fig = px.pie(
-                    selected.table,
-                    names="Варіант відповіді",
-                    values="Кількість",
-                    title=f"{selected.question.code}. {selected.question.text}",
-                    hole=0.0,
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                st.dataframe(selected.table)
+                st.subheader(f"{selected.question.code}. {selected.question.text}")
+                
+                col_chart, col_table = st.columns([2, 1])
+                
+                with col_chart:
+                    fig = px.pie(
+                        selected.table,
+                        names="Варіант відповіді",
+                        values="Кількість",
+                        hole=0.4,
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col_table:
+                    st.dataframe(selected.table, use_container_width=True)
 
-        # --- Експорт звіту ---
+    with tab2:
         st.subheader("Експорт результатів")
         range_info = f"Рядки {st.session_state.from_row}–{st.session_state.to_row} (усього {len(sliced)} анкет)"
         
-        # Створюємо 3 колонки для кнопок
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            # EXCEL
-            report_bytes_xlsx = build_excel_report(
-                original_df=st.session_state.ld.df,
-                sliced_df=st.session_state.sliced,
-                qinfo=st.session_state.qinfo,
-                summaries=st.session_state.summaries,
-                range_info=range_info,
-            )
-            st.download_button(
-                label="📥 Excel звіт",
-                data=report_bytes_xlsx,
-                file_name="survey_results.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        # --- Налаштування презентації ---
+        with st.expander("Налаштування PowerPoint (Тема та Шаблон)"):
+            custom_topic = st.text_input("Заголовок звіту", value="Звіт про результати опитування")
+            uploaded_template = st.file_uploader(
+                "Завантажити шаблон дизайну (.pptx)", 
+                type="pptx", 
+                help="Завантажте порожню презентацію з потрібним вам дизайном."
             )
 
-        with col2:
-            # PDF
+        # --- Кешовані функції генерації ---
+        
+        @st.cache_data(show_spinner="Генеруємо PowerPoint...")
+        def get_pptx_data(_original_df, _sliced_df, _summaries, _range_info, _topic, _template_bytes):
+            template_stream = io.BytesIO(_template_bytes) if _template_bytes else None
+            return build_pptx_report(
+                _original_df, _sliced_df, _summaries, _range_info, 
+                report_title=_topic, 
+                template_file=template_stream
+            )
+
+        @st.cache_data(show_spinner="Генеруємо Excel...")
+        def get_excel_data(_original_df, _sliced_df, _qinfo, _summaries, _range_info):
+            return build_excel_report(_original_df, _sliced_df, _qinfo, _summaries, _range_info)
+
+        @st.cache_data(show_spinner="Генеруємо PDF...")
+        def get_pdf_data(_original_df, _sliced_df, _summaries, _range_info):
+            return build_pdf_report(_original_df, _sliced_df, _summaries, _range_info)
+
+        @st.cache_data(show_spinner="Генеруємо DOCX...")
+        def get_docx_data(_original_df, _sliced_df, _summaries, _range_info):
+            return build_docx_report(_original_df, _sliced_df, _summaries, _range_info)
+
+        # --- КНОПКИ ЕКСПОРТУ ---
+        c1, c2, c3, c4 = st.columns(4)
+
+        # 1. EXCEL
+        with c1:
+            if st.button("📊 Excel звіт"):
+                with st.spinner("Генеруємо Excel..."):
+                    try:
+                        excel_bytes = get_excel_data(
+                            st.session_state.ld.df, st.session_state.sliced,
+                            st.session_state.qinfo, st.session_state.summaries, range_info
+                        )
+                        st.download_button(
+                            "📥 Завантажити Excel", excel_bytes, "survey_results.xlsx",
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    except Exception as e: st.error(f"Error: {e}")
+
+        # 2. PDF
+        with c2:
             if st.button("📄 PDF звіт"):
                 with st.spinner("Генеруємо PDF..."):
                     try:
-                        from pdf_export import build_pdf_report # lazy import
-                        report_bytes_pdf = build_pdf_report(
-                            original_df=st.session_state.ld.df,
-                            sliced_df=st.session_state.sliced,
-                            summaries=st.session_state.summaries,
-                            range_info=range_info,
+                        pdf_bytes = get_pdf_data(
+                            st.session_state.ld.df, st.session_state.sliced,
+                            st.session_state.summaries, range_info
                         )
                         st.download_button(
-                            label="📥 Завантажити PDF",
-                            data=report_bytes_pdf,
-                            file_name="survey_results.pdf",
-                            mime="application/pdf",
+                            "📥 Завантажити PDF", pdf_bytes, "survey_results.pdf", "application/pdf"
                         )
-                    except Exception as e:
-                        st.error(f"Error: {e}")
+                    except Exception as e: st.error(f"Error: {e}")
 
-        with col3:
-            # WORD (DOCX)
+        # 3. WORD
+        with c3:
             if st.button("📝 Word звіт"):
                 with st.spinner("Генеруємо DOCX..."):
                     try:
-                        report_bytes_docx = build_docx_report(
-                            original_df=st.session_state.ld.df,
-                            sliced_df=st.session_state.sliced,
-                            summaries=st.session_state.summaries,
-                            range_info=range_info,
+                        docx_bytes = get_docx_data(
+                            st.session_state.ld.df, st.session_state.sliced,
+                            st.session_state.summaries, range_info
                         )
                         st.download_button(
-                            label="📥 Завантажити Word",
-                            data=report_bytes_docx,
-                            file_name="survey_results.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            "📥 Завантажити Word", docx_bytes, "survey_results.docx",
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                         )
-                    except Exception as e:
-                         st.error(f"Error DOCX: {e}")
-                
-        with col4:
-            # PPTX
+                    except Exception as e: st.error(f"Error: {e}")
+
+        # 4. POWERPOINT
+        with c4:
             if st.button("🖥️ PPTX звіт"):
                 with st.spinner("Генеруємо PowerPoint..."):
                     try:
-                        report_bytes_pptx = build_pptx_report(
-                            original_df=st.session_state.ld.df,
-                            sliced_df=st.session_state.sliced,
-                            summaries=st.session_state.summaries,
-                            range_info=range_info,
+                        # Логіка вибору шаблону: Завантажений -> Локальний -> Стандартний
+                        final_template_bytes = None
+                        if uploaded_template is not None:
+                            final_template_bytes = uploaded_template.getvalue()
+                        elif os.path.exists("template.pptx"):
+                            with open("template.pptx", "rb") as f:
+                                final_template_bytes = f.read()
+
+                        pptx_bytes = get_pptx_data(
+                            st.session_state.ld.df,
+                            st.session_state.sliced,
+                            st.session_state.summaries,
+                            range_info,
+                            _topic=custom_topic,
+                            _template_bytes=final_template_bytes
                         )
                         st.download_button(
                             label="📥 Завантажити PPTX",
-                            data=report_bytes_pptx,
+                            data=pptx_bytes,
                             file_name="survey_results.pptx",
                             mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                         )
                     except Exception as e:
                         st.error(f"Error PPTX: {e}")
-
-if __name__ == "__main__":
-    main()
+else:
+    st.info("Будь ласка, завантажте файл(и) Excel у бічній панелі.")
