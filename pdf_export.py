@@ -24,8 +24,8 @@ FONT_URL = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSa
 FONT_NAME = "DejaVuSans"
 
 CHART_DPI = 150           
-FONT_SIZE_BASE = 11       
-BAR_WIDTH = 0.6           
+FONT_SIZE_BASE = 14       
+BAR_WIDTH = 0.4           
 
 def get_font_path() -> Optional[str]:
     """Шукає або завантажує шрифт DejaVuSans.ttf."""
@@ -216,7 +216,7 @@ class PDFReport(FPDF):
         if qs.question.qtype == QuestionType.SCALE:
             # --- СТОВПЧИКОВА: ЩЕ НИЖЧА ---
             # figsize=(10, 3.8) робить їх дуже акуратними
-            plt.figure(figsize=(10, 3.8)) 
+            plt.figure(figsize=(6, 3.8)) 
             
             bars = plt.bar(wrapped_labels, values, color='#4F81BD', width=BAR_WIDTH)
             plt.ylabel('Кількість')
@@ -229,7 +229,7 @@ class PDFReport(FPDF):
                          f'{int(height)}', ha='center', va='bottom', fontweight='bold')
         else:
             # --- КРУГОВА: ВИСОКА ---
-            plt.figure(figsize=(10, 7))
+            plt.figure(figsize=(5, 4))
             
             colors = ['#4F81BD', '#C0504D', '#9BBB59', '#8064A2', '#4BACC6', '#F79646']
             c_arg = colors[:len(values)] if len(values) <= len(colors) else None
@@ -265,7 +265,7 @@ class PDFReport(FPDF):
         
         plt.close()
 
-        self.image(tmp_img_path, x=20, w=170)
+        self.image(tmp_img_path, x=20, w=120)
         self.ln(5)
         
         try:
