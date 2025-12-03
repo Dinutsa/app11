@@ -265,7 +265,7 @@ class PDFReport(FPDF):
         
         plt.close()
 
-        self.image(tmp_img_path, x=20, w=120)
+        self.image(tmp_img_path, x=20, w=150)
         self.ln(5)
         
         try:
