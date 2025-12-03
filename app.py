@@ -1,25 +1,9 @@
-"""
-Головний модуль веб-застосунку для обробки результатів студентських опитувань.
-
-Забезпечує:
-- завантаження файлів Excel із Google Forms;
-- вибір діапазону рядків;
-- класифікацію типів питань;
-- обчислення частот і відсотків;
-- побудову кругових діаграм;
-- формування Excel-звіту.
-
-Такий підхід відповідає рекомендаціям з автоматизації обробки
-соціологічних досліджень та потребам систем внутрішнього забезпечення
-якості освіти ЗВО.
-"""
 import io
 import os
 import streamlit as st
 import plotly.express as px
 import pandas as pd
 
-# Імпорти ваших модулів (переконайтеся, що файли існують)
 from data_loader import load_excels, get_row_bounds, slice_range
 from classification import classify_questions, QuestionType
 from summary import build_all_summaries
@@ -70,7 +54,6 @@ with st.sidebar:
                 st.session_state.ld = ld
                 st.session_state.uploaded_files_store = uploaded_files
                 
-                # Початкові межі
                 min_r, max_r = get_row_bounds(ld)
                 st.session_state.from_row = min_r
                 st.session_state.to_row = max_r
@@ -87,7 +70,7 @@ with st.sidebar:
         min_r, max_r = get_row_bounds(st.session_state.ld)
         if max_r > min_r:
             r_range = st.slider(
-                "Діапазон рядків (Excel)",
+                "Діапазон рядків",
                 min_value=min_r,
                 max_value=max_r,
                 value=(st.session_state.from_row, st.session_state.to_row)
@@ -95,11 +78,9 @@ with st.sidebar:
             st.session_state.from_row = r_range[0]
             st.session_state.to_row = r_range[1]
         
-        # Оновлення даних при зміні слайдера
         sliced = slice_range(st.session_state.ld, st.session_state.from_row, st.session_state.to_row)
         st.session_state.sliced = sliced
         
-        # Класифікація та підсумки
         qinfo = classify_questions(sliced)
         st.session_state.qinfo = qinfo
         
@@ -113,12 +94,20 @@ if st.session_state.processed and st.session_state.sliced is not None:
     
     tab1, tab2 = st.tabs(["📊 Аналіз", "📥 Експорт"])
     
+    # ---------------- ВКЛАДКА АНАЛІЗУ ----------------
     with tab1:
-        st.write(f"**Відображається {len(sliced)} анкет** (рядки {st.session_state.from_row}-{st.session_state.to_row})")
+        st.info(f"**Відображається {len(sliced)} анкет** (рядки {st.session_state.from_row}-{st.session_state.to_row})")
         
-        # Вибір питання
+        # 1. ПЕРЕГЛЯД ВИХІДНИХ ДАНИХ (Повернуто на прохання)
+        with st.expander("🔍 Перегляд вихідних даних (таблиця)", expanded=False):
+            st.dataframe(sliced)
+        
+        st.divider()
+        
+        # 2. ДЕТАЛЬНИЙ ПЕРЕГЛЯД ОДНОГО ПИТАННЯ
+        st.subheader("Детальний аналіз окремого питання")
         options = [qs.question.code for qs in summaries]
-        selected_code = st.selectbox("Оберіть питання для перегляду:", options)
+        selected_code = st.selectbox("Оберіть питання:", options)
         
         if selected_code:
             st.session_state.selected_code = selected_code
@@ -127,27 +116,55 @@ if st.session_state.processed and st.session_state.sliced is not None:
             if selected is None or selected.table.empty:
                 st.warning("Для цього питання немає даних для побудови діаграми.")
             else:
-                st.subheader(f"{selected.question.code}. {selected.question.text}")
+                st.markdown(f"**{selected.question.code}. {selected.question.text}**")
                 
-                col_chart, col_table = st.columns([2, 1])
+                col_chart, col_table = st.columns([1.5, 1])
                 
                 with col_chart:
+                    # ПОВНА КРУГОВА ДІАГРАМА (hole=0)
                     fig = px.pie(
                         selected.table,
                         names="Варіант відповіді",
                         values="Кількість",
-                        hole=0.4,
+                        hole=0, # Повне коло, не пончик
+                        title="Розподіл відповідей"
                     )
                     st.plotly_chart(fig, use_container_width=True)
                 
                 with col_table:
+                    st.write("Таблиця частот:")
                     st.dataframe(selected.table, use_container_width=True)
 
+        # 3. ПОВНИЙ СПИСОК УСІХ ПИТАНЬ (Нова секція знизу)
+        st.divider()
+        st.subheader("📋 Повний огляд всіх питань")
+        
+        for qs in summaries:
+            # Пропускаємо порожні або відкриті питання без таблиці
+            if qs.table.empty:
+                continue
+                
+            with st.expander(f"{qs.question.code}. {qs.question.text}", expanded=True):
+                c_chart, c_tbl = st.columns([1, 1])
+                
+                with c_chart:
+                     fig_all = px.pie(
+                        qs.table,
+                        names="Варіант відповіді",
+                        values="Кількість",
+                        hole=0
+                    )
+                     st.plotly_chart(fig_all, use_container_width=True, key=f"chart_{qs.question.code}")
+                
+                with c_tbl:
+                    st.dataframe(qs.table, use_container_width=True)
+
+
+    # ---------------- ВКЛАДКА ЕКСПОРТУ ----------------
     with tab2:
         st.subheader("Експорт результатів")
         range_info = f"Рядки {st.session_state.from_row}–{st.session_state.to_row} (усього {len(sliced)} анкет)"
         
-        # --- Налаштування презентації ---
         with st.expander("Налаштування PowerPoint (Тема та Шаблон)"):
             custom_topic = st.text_input("Заголовок звіту", value="Звіт про результати опитування")
             uploaded_template = st.file_uploader(
@@ -156,8 +173,7 @@ if st.session_state.processed and st.session_state.sliced is not None:
                 help="Завантажте порожню презентацію з потрібним вам дизайном."
             )
 
-        # --- Кешовані функції генерації ---
-        
+        # Функції з кешуванням
         @st.cache_data(show_spinner="Генеруємо PowerPoint...")
         def get_pptx_data(_original_df, _sliced_df, _summaries, _range_info, _topic, _template_bytes):
             template_stream = io.BytesIO(_template_bytes) if _template_bytes else None
@@ -179,59 +195,37 @@ if st.session_state.processed and st.session_state.sliced is not None:
         def get_docx_data(_original_df, _sliced_df, _summaries, _range_info):
             return build_docx_report(_original_df, _sliced_df, _summaries, _range_info)
 
-        # --- КНОПКИ ЕКСПОРТУ ---
+        # Кнопки експорту
         c1, c2, c3, c4 = st.columns(4)
 
-        # 1. EXCEL
         with c1:
             if st.button("📊 Excel звіт"):
                 with st.spinner("Генеруємо Excel..."):
                     try:
-                        excel_bytes = get_excel_data(
-                            st.session_state.ld.df, st.session_state.sliced,
-                            st.session_state.qinfo, st.session_state.summaries, range_info
-                        )
-                        st.download_button(
-                            "📥 Завантажити Excel", excel_bytes, "survey_results.xlsx",
-                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
+                        excel_bytes = get_excel_data(st.session_state.ld.df, st.session_state.sliced, st.session_state.qinfo, st.session_state.summaries, range_info)
+                        st.download_button("📥 Завантажити Excel", excel_bytes, "survey_results.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                     except Exception as e: st.error(f"Error: {e}")
 
-        # 2. PDF
         with c2:
             if st.button("📄 PDF звіт"):
                 with st.spinner("Генеруємо PDF..."):
                     try:
-                        pdf_bytes = get_pdf_data(
-                            st.session_state.ld.df, st.session_state.sliced,
-                            st.session_state.summaries, range_info
-                        )
-                        st.download_button(
-                            "📥 Завантажити PDF", pdf_bytes, "survey_results.pdf", "application/pdf"
-                        )
+                        pdf_bytes = get_pdf_data(st.session_state.ld.df, st.session_state.sliced, st.session_state.summaries, range_info)
+                        st.download_button("📥 Завантажити PDF", pdf_bytes, "survey_results.pdf", "application/pdf")
                     except Exception as e: st.error(f"Error: {e}")
 
-        # 3. WORD
         with c3:
             if st.button("📝 Word звіт"):
                 with st.spinner("Генеруємо DOCX..."):
                     try:
-                        docx_bytes = get_docx_data(
-                            st.session_state.ld.df, st.session_state.sliced,
-                            st.session_state.summaries, range_info
-                        )
-                        st.download_button(
-                            "📥 Завантажити Word", docx_bytes, "survey_results.docx",
-                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        )
+                        docx_bytes = get_docx_data(st.session_state.ld.df, st.session_state.sliced, st.session_state.summaries, range_info)
+                        st.download_button("📥 Завантажити Word", docx_bytes, "survey_results.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
                     except Exception as e: st.error(f"Error: {e}")
 
-        # 4. POWERPOINT
         with c4:
             if st.button("🖥️ PPTX звіт"):
                 with st.spinner("Генеруємо PowerPoint..."):
                     try:
-                        # Логіка вибору шаблону: Завантажений -> Локальний -> Стандартний
                         final_template_bytes = None
                         if uploaded_template is not None:
                             final_template_bytes = uploaded_template.getvalue()
@@ -240,19 +234,10 @@ if st.session_state.processed and st.session_state.sliced is not None:
                                 final_template_bytes = f.read()
 
                         pptx_bytes = get_pptx_data(
-                            st.session_state.ld.df,
-                            st.session_state.sliced,
-                            st.session_state.summaries,
-                            range_info,
-                            _topic=custom_topic,
-                            _template_bytes=final_template_bytes
+                            st.session_state.ld.df, st.session_state.sliced, st.session_state.summaries, 
+                            range_info, _topic=custom_topic, _template_bytes=final_template_bytes
                         )
-                        st.download_button(
-                            label="📥 Завантажити PPTX",
-                            data=pptx_bytes,
-                            file_name="survey_results.pptx",
-                            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                        )
+                        st.download_button("📥 Завантажити PPTX", pptx_bytes, "survey_results.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation")
                     except Exception as e:
                         st.error(f"Error PPTX: {e}")
 else:
