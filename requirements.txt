@@ -4,7 +4,7 @@ openpyxl
 xlsxwriter
 numpy
 streamlit
-fpdf2
+fpdf
 matplotlib
 requests
 python-docx
