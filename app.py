@@ -6,7 +6,7 @@ import plotly.express as px
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Імпорти
+# Імпорти модулів
 from data_loader import load_excels, get_row_bounds, slice_range
 from classification import classify_questions, QuestionType
 from summary import build_all_summaries
@@ -63,6 +63,15 @@ with st.sidebar:
             st.session_state.clear()
             st.rerun()
 
+# --- HELPER FUNCTION ---
+def format_question_label(qs):
+    """Допоміжна функція для гарного відображення питань у списку"""
+    # Обрізаємо дуже довгі питання до 100 символів для зручності
+    text = qs.question.text
+    if len(text) > 100:
+        text = text[:100] + "..."
+    return f"{qs.question.code}. {text}"
+
 # --- MAIN ---
 if st.session_state.processed and st.session_state.sliced is not None:
     sliced = st.session_state.sliced
@@ -80,62 +89,80 @@ if st.session_state.processed and st.session_state.sliced is not None:
         
         # 1. ДЕТАЛЬНИЙ ПЕРЕГЛЯД
         st.subheader("Детальний перегляд")
-        opts = [qs.question.code for qs in summaries]
-        sel = st.selectbox("Оберіть питання:", opts)
-        if sel:
-            q = next((x for x in summaries if x.question.code == sel), None)
-            if q and not q.table.empty:
-                st.markdown(f"**{q.question.text}**")
-                c1, c2 = st.columns([1.5, 1])
-                with c1: st.plotly_chart(px.pie(q.table, names="Варіант відповіді", values="Кількість", hole=0, title="Розподіл"), use_container_width=True)
-                with c2: st.dataframe(q.table, use_container_width=True)
+        # Використовуємо format_func для відображення "Код. Текст"
+        selected_qs = st.selectbox(
+            "Оберіть питання:", 
+            options=summaries, 
+            format_func=format_question_label
+        )
+
+        if selected_qs and not selected_qs.table.empty:
+            st.markdown(f"**{selected_qs.question.text}**")
+            c1, c2 = st.columns([1.5, 1])
+            with c1: st.plotly_chart(px.pie(selected_qs.table, names="Варіант відповіді", values="Кількість", hole=0, title="Розподіл"), use_container_width=True)
+            with c2: st.dataframe(selected_qs.table, use_container_width=True)
+        elif selected_qs:
+             st.warning("Немає даних для цього питання.")
 
         st.divider()
 
-        # 2. КРОС-ТАБУЛЯЦІЯ (ВИПРАВЛЕНО)
+        # 2. КРОС-ТАБУЛЯЦІЯ (З покращеним UI та фіксом помилки)
         st.subheader("🔀 Крос-табуляція (Фільтр)")
         with st.expander("Налаштувати фільтр (Хто як відповів?)", expanded=True):
             ct_col1, ct_col2, ct_col3 = st.columns(3)
             
+            # 1. Питання-фільтр
             with ct_col1:
-                filter_q_code = st.selectbox("1. Питання-фільтр:", opts, key="cross_q1")
-                filter_qs = next((x for x in summaries if x.question.code == filter_q_code), None)
+                filter_qs = st.selectbox(
+                    "1. Питання-фільтр:", 
+                    options=summaries, 
+                    format_func=format_question_label,
+                    key="cross_q1"
+                )
             
+            # 2. Значення фільтра
             with ct_col2:
+                filter_val = None
                 if filter_qs:
-                    # ВИПРАВЛЕНО: Використовуємо .text замість .original_col
+                    # Використовуємо .text, бо це назва колонки в DataFrame
                     col_name = filter_qs.question.text
                     if col_name in sliced.columns:
                         unique_vals = sliced[col_name].unique()
                         unique_vals = [x for x in unique_vals if pd.notna(x)]
                         filter_val = st.selectbox("2. Значення фільтра:", unique_vals, key="cross_val")
                     else:
-                        st.error("Помилка: колонка не знайдена в даних")
-                        filter_val = None
+                        st.error("Помилка: колонка не знайдена.")
             
+            # 3. Цільове питання
             with ct_col3:
-                target_q_code = st.selectbox("3. Що аналізуємо:", opts, key="cross_q2")
-                target_qs = next((x for x in summaries if x.question.code == target_q_code), None)
+                target_qs = st.selectbox(
+                    "3. Що аналізуємо:", 
+                    options=summaries, 
+                    format_func=format_question_label,
+                    key="cross_q2"
+                )
 
+            # Логіка та відображення
             if filter_qs and target_qs and filter_val:
-                # ВИПРАВЛЕНО: Використовуємо .text
                 col_name_filter = filter_qs.question.text
                 col_name_target = target_qs.question.text
                 
-                # Фільтруємо
+                # Фільтрація даних
                 subset = sliced[sliced[col_name_filter] == filter_val]
                 
                 if not subset.empty:
-                    st.markdown(f"### Результати для: **{filter_q_code} = {filter_val}** (n={len(subset)})")
-                    st.markdown(f"Питання: **{target_qs.question.text}**")
+                    st.success(f"Знайдено **{len(subset)}** анкет, де {filter_qs.question.code} = '{filter_val}'")
+                    st.markdown(f"#### Результати для питання: {target_qs.question.code}")
+                    st.caption(f"{target_qs.question.text}")
                     
+                    # Рахуємо статистику
                     counts = subset[col_name_target].value_counts().reset_index()
                     counts.columns = ["Варіант відповіді", "Кількість"]
                     counts["%"] = (counts["Кількість"] / len(subset) * 100).round(1)
                     
                     ct_chart, ct_data = st.columns([1.5, 1])
                     with ct_chart:
-                        fig_cross = px.pie(counts, names="Варіант відповіді", values="Кількість", hole=0, title=f"Розподіл")
+                        fig_cross = px.pie(counts, names="Варіант відповіді", values="Кількість", hole=0, title=f"Розподіл відповідей")
                         st.plotly_chart(fig_cross, use_container_width=True)
                     with ct_data:
                         st.dataframe(counts, use_container_width=True)
@@ -144,11 +171,12 @@ if st.session_state.processed and st.session_state.sliced is not None:
 
         st.divider()
         
-        # 3. ПОВНИЙ СПИСОК
-        st.subheader("📋 Повний огляд")
+        # 3. ПОВНИЙ СПИСОК (РОЗКРИТИЙ)
+        st.subheader("📋 Повний огляд всіх питань")
         for q in summaries:
             if q.table.empty: continue
-            with st.expander(f"{q.question.code}. {q.question.text}"):
+            # expanded=True робить їх відкритими за замовчуванням
+            with st.expander(f"{q.question.code}. {q.question.text}", expanded=True):
                 c1, c2 = st.columns([1, 1])
                 with c1: st.plotly_chart(px.pie(q.table, names="Варіант відповіді", values="Кількість", hole=0), use_container_width=True, key=f"all_{q.question.code}")
                 with c2: st.dataframe(q.table, use_container_width=True)
