@@ -1,7 +1,14 @@
+"""
+Модуль експорту звіту у формат Word (.docx).
+ВЕРСІЯ: DATE ON TOP (Дата зверху).
+- Виправлено імпорт pandas (pd).
+- Додано дату справа перед заголовком.
+"""
+
 import io
 import textwrap
-from datetime import datetime  # <-- Додано
-import pandas as pd
+from datetime import datetime  # <-- Імпорт дати
+import pandas as pd            # <-- ВИПРАВЛЕНО: Імпорт pandas як pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
