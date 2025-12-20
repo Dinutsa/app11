@@ -1,8 +1,8 @@
 """
 Модуль експорту звіту у формат PDF.
-ВЕРСІЯ: FPDF2 (Modern).
-- Використовує бібліотеку fpdf2 для повної підтримки Unicode.
-- Автоматичне завантаження шрифту.
+ВЕРСІЯ: FPDF2 + Robust Font Handling.
+- Виправлено RuntimeError: Undefined font.
+- Безпечний header/footer (автоматично перемикається на Helvetica, якщо DejaVu недоступний).
 """
 
 import io
@@ -29,6 +29,10 @@ def check_and_download_font():
     if not os.path.exists(FONT_FILE):
         try:
             print(f"Завантаження шрифту {FONT_FILE}...")
+            # Використовуємо User-Agent, щоб сервер не блокував запит
+            opener = urllib.request.build_opener()
+            opener.addheaders = [('User-agent', 'Mozilla/5.0')]
+            urllib.request.install_opener(opener)
             urllib.request.urlretrieve(FONT_URL, FONT_FILE)
             print("Шрифт завантажено.")
         except Exception as e:
@@ -36,12 +40,22 @@ def check_and_download_font():
 
 class PDFReport(FPDF):
     def header(self):
-        self.set_font("DejaVu", size=10)
+        # БЕЗПЕЧНИЙ ХЕДЕР: Пробуємо DejaVu, якщо ні - Helvetica
+        try:
+            self.set_font("DejaVu", size=10)
+        except RuntimeError:
+            self.set_font("Helvetica", "B", 10)
+            
         self.cell(0, 10, "Звіт про результати опитування", new_x="LMARGIN", new_y="NEXT", align='R')
 
     def footer(self):
         self.set_y(-15)
-        self.set_font("DejaVu", size=8)
+        # БЕЗПЕЧНИЙ ФУТЕР
+        try:
+            self.set_font("DejaVu", size=8)
+        except RuntimeError:
+            self.set_font("Helvetica", "I", 8)
+            
         self.cell(0, 10, f'Page {self.page_no()}', align='C')
 
 def create_chart_image(qs: QuestionSummary) -> io.BytesIO:
@@ -96,25 +110,39 @@ def create_chart_image(qs: QuestionSummary) -> io.BytesIO:
     return img_stream
 
 def build_pdf_report(original_df, sliced_df, summaries, range_info) -> bytes:
+    # 1. Завантажуємо шрифт
     check_and_download_font()
     
     pdf = PDFReport()
     
-    # Реєстрація шрифту (Syntax fpdf2)
+    # 2. Реєструємо шрифт ТІЛЬКИ якщо файл існує
+    font_registered = False
     if os.path.exists(FONT_FILE):
-        pdf.add_font("DejaVu", fname=FONT_FILE)
-    else:
-        # Fallback, але це призведе до кракозябрів, тому шрифт критичний
-        pdf.set_font("Helvetica")
+        try:
+            pdf.add_font("DejaVu", fname=FONT_FILE)
+            font_registered = True
+        except Exception as e:
+            print(f"Не вдалося зареєструвати шрифт: {e}")
 
+    # 3. Додаємо сторінку (тут викликається header)
     pdf.add_page()
-    pdf.set_font("DejaVu", size=16)
+    
+    # 4. Встановлюємо шрифт для тіла документа
+    if font_registered:
+        pdf.set_font("DejaVu", size=16)
+    else:
+        pdf.set_font("Helvetica", "B", 16) # Fallback
     
     pdf.cell(0, 10, "Звіт про результати", new_x="LMARGIN", new_y="NEXT", align='C')
-    pdf.set_font_size(12)
+    
+    if font_registered:
+        pdf.set_font("DejaVu", size=12)
+    else:
+        pdf.set_font("Helvetica", size=12)
+
     pdf.cell(0, 10, f"Всього: {len(original_df)} | Оброблено: {len(sliced_df)}", new_x="LMARGIN", new_y="NEXT", align='C')
     
-    # Очистка тексту від проблемних символів
+    # Очистка тексту
     safe_range = range_info.replace('–', '-').replace('—', '-')
     pdf.cell(0, 10, safe_range, new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(5)
@@ -126,13 +154,20 @@ def build_pdf_report(original_df, sliced_df, summaries, range_info) -> bytes:
         title = f"{qs.question.code}. {qs.question.text}"
         title = title.replace('–', '-').replace('—', '-').replace('’', "'")
         
-        pdf.set_font("DejaVu", size=12)
+        if font_registered:
+            pdf.set_font("DejaVu", size=12)
+        else:
+            pdf.set_font("Helvetica", size=12)
+            
         pdf.multi_cell(0, 6, title)
         pdf.ln(2)
 
         # Таблиця
-        pdf.set_font_size(10)
-        # У fpdf2 краще використовувати ширину сторінки
+        if font_registered:
+            pdf.set_font("DejaVu", size=10)
+        else:
+            pdf.set_font("Helvetica", size=10)
+
         col_w1 = 110
         col_w2 = 30
         
@@ -143,7 +178,6 @@ def build_pdf_report(original_df, sliced_df, summaries, range_info) -> bytes:
         for row in qs.table.itertuples(index=False):
             val_text = str(row[0])[:60].replace('–', '-').replace('—', '-').replace('’', "'")
             
-            # Робимо так, щоб текст не вилазив за межі
             pdf.cell(col_w1, 8, val_text, border=1)
             pdf.cell(col_w2, 8, str(row[1]), border=1)
             pdf.cell(col_w2, 8, str(row[2]), border=1, new_x="LMARGIN", new_y="NEXT")
@@ -153,8 +187,6 @@ def build_pdf_report(original_df, sliced_df, summaries, range_info) -> bytes:
         # Графік
         try:
             img = create_chart_image(qs)
-            # fpdf2 вміє читати потоки напряму, але для надійності
-            # використаємо старий метод з файлом, він залізобетонний
             import tempfile
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                 tmp.write(img.getvalue())
@@ -164,10 +196,9 @@ def build_pdf_report(original_df, sliced_df, summaries, range_info) -> bytes:
             os.unlink(name)
             pdf.ln(10)
         except Exception as e:
-            pdf.cell(0, 10, f"[Chart Error: {e}]", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 10, f"[Chart Error]", new_x="LMARGIN", new_y="NEXT")
 
         if pdf.get_y() > 240:
             pdf.add_page()
 
-    # Повертаємо байти (fpdf2 робить це просто)
     return bytes(pdf.output())
