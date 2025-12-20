@@ -38,7 +38,7 @@ def set_table_grid_style(table):
     tblStyle.text = '{5940675A-B579-460E-94D1-54222C63F5DA}'
 
 def create_chart_image(qs: QuestionSummary) -> io.BytesIO:
-    """Генерує зображення діаграми (Бар або Круг)."""
+    """Генерує зображення діаграми (РОЗУМНИЙ ВИБІР: Bar або Pie)."""
     
     plt.close('all') 
     plt.clf()
@@ -48,22 +48,28 @@ def create_chart_image(qs: QuestionSummary) -> io.BytesIO:
     values = qs.table["Кількість"]
     wrapped_labels = [textwrap.fill(l, 25) for l in labels]
 
-    # === ЛОГІКА ВИБОРУ ТИПУ ГРАФІКА ===
-    if qs.question.qtype == QuestionType.SCALE:
-        # --- СТОВПЧИКОВА (BAR) ---
+    # --- ВИЗНАЧЕННЯ ТИПУ ---
+    is_scale = (qs.question.qtype == QuestionType.SCALE)
+    if not is_scale:
+        try:
+            vals = pd.to_numeric(qs.table["Варіант відповіді"], errors='coerce')
+            if vals.notna().all() and vals.min() >= 0 and vals.max() <= 10:
+                is_scale = True
+        except: pass
+
+    if is_scale:
+        # СТОВПЧИКОВА
         fig = plt.figure(figsize=(6.0, 4.5))
         bars = plt.bar(wrapped_labels, values, color='#4F81BD', width=BAR_WIDTH)
         plt.ylabel('Кількість')
         plt.grid(axis='y', linestyle='--', alpha=0.5)
-        plt.xticks(rotation=0) # Горизонтальні підписи
-        
-        # Підписи над стовпчиками
+        plt.xticks(rotation=0)
         for bar in bars:
             height = bar.get_height()
             plt.text(bar.get_x() + bar.get_width()/2., height + 0.1,
                      f'{int(height)}', ha='center', va='bottom', fontweight='bold')
     else:
-        # --- КРУГОВА (PIE) ---
+        # КРУГОВА
         fig = plt.figure(figsize=(6.0, 5.0))
         colors = ['#4F81BD', '#C0504D', '#9BBB59', '#8064A2', '#4BACC6', '#F79646']
         c_arg = colors[:len(values)] if len(values) <= len(colors) else None
