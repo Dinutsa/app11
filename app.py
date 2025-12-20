@@ -89,60 +89,58 @@ if st.session_state.processed and st.session_state.sliced is not None:
                 c1, c2 = st.columns([1.5, 1])
                 with c1: st.plotly_chart(px.pie(q.table, names="Варіант відповіді", values="Кількість", hole=0, title="Розподіл"), use_container_width=True)
                 with c2: st.dataframe(q.table, use_container_width=True)
-            else: st.warning("Немає даних.")
 
         st.divider()
 
-        # 2. КРОС-ТАБУЛЯЦІЯ (НОВЕ!)
+        # 2. КРОС-ТАБУЛЯЦІЯ (ВИПРАВЛЕНО)
         st.subheader("🔀 Крос-табуляція (Фільтр)")
         with st.expander("Налаштувати фільтр (Хто як відповів?)", expanded=True):
             ct_col1, ct_col2, ct_col3 = st.columns(3)
             
-            # Вибір питання-фільтра (наприклад "Курс")
             with ct_col1:
                 filter_q_code = st.selectbox("1. Питання-фільтр:", opts, key="cross_q1")
                 filter_qs = next((x for x in summaries if x.question.code == filter_q_code), None)
             
-            # Вибір значення фільтра (наприклад "1 курс")
             with ct_col2:
                 if filter_qs:
-                    # Отримуємо унікальні відповіді з "сирих" даних для цього питання
-                    unique_vals = sliced[filter_qs.question.original_col].unique()
-                    # Прибираємо NaN
-                    unique_vals = [x for x in unique_vals if pd.notna(x)]
-                    filter_val = st.selectbox("2. Значення фільтра:", unique_vals, key="cross_val")
+                    # ВИПРАВЛЕНО: Використовуємо .text замість .original_col
+                    col_name = filter_qs.question.text
+                    if col_name in sliced.columns:
+                        unique_vals = sliced[col_name].unique()
+                        unique_vals = [x for x in unique_vals if pd.notna(x)]
+                        filter_val = st.selectbox("2. Значення фільтра:", unique_vals, key="cross_val")
+                    else:
+                        st.error("Помилка: колонка не знайдена в даних")
+                        filter_val = None
             
-            # Вибір цільового питання (наприклад "Задоволеність")
             with ct_col3:
                 target_q_code = st.selectbox("3. Що аналізуємо:", opts, key="cross_q2")
                 target_qs = next((x for x in summaries if x.question.code == target_q_code), None)
 
-            # Логіка фільтрації
             if filter_qs and target_qs and filter_val:
-                # 1. Фільтруємо датафрейм
-                col_name_filter = filter_qs.question.original_col
-                col_name_target = target_qs.question.original_col
+                # ВИПРАВЛЕНО: Використовуємо .text
+                col_name_filter = filter_qs.question.text
+                col_name_target = target_qs.question.text
                 
+                # Фільтруємо
                 subset = sliced[sliced[col_name_filter] == filter_val]
                 
                 if not subset.empty:
-                    st.markdown(f"### Результати для групи: **{filter_q_code} = {filter_val}** (Кількість: {len(subset)})")
+                    st.markdown(f"### Результати для: **{filter_q_code} = {filter_val}** (n={len(subset)})")
                     st.markdown(f"Питання: **{target_qs.question.text}**")
                     
-                    # 2. Рахуємо статистику для підмножини
                     counts = subset[col_name_target].value_counts().reset_index()
                     counts.columns = ["Варіант відповіді", "Кількість"]
                     counts["%"] = (counts["Кількість"] / len(subset) * 100).round(1)
                     
-                    # 3. Відображаємо
                     ct_chart, ct_data = st.columns([1.5, 1])
                     with ct_chart:
-                        fig_cross = px.pie(counts, names="Варіант відповіді", values="Кількість", hole=0, title=f"Розподіл для '{filter_val}'")
+                        fig_cross = px.pie(counts, names="Варіант відповіді", values="Кількість", hole=0, title=f"Розподіл")
                         st.plotly_chart(fig_cross, use_container_width=True)
                     with ct_data:
                         st.dataframe(counts, use_container_width=True)
                 else:
-                    st.warning("Немає анкет з таким значенням фільтра.")
+                    st.warning("Немає анкет з таким значенням.")
 
         st.divider()
         
@@ -160,7 +158,6 @@ if st.session_state.processed and st.session_state.sliced is not None:
         st.subheader("Експорт")
         range_info = f"Рядки {st.session_state.from_row}–{st.session_state.to_row}"
         
-        # Функції
         @st.cache_data(show_spinner="Excel...")
         def get_excel(_ld, _sl, _qi, _sm, _ri): return build_excel_report(_ld, _sl, _qi, _sm, _ri)
         @st.cache_data(show_spinner="PDF...")
@@ -170,22 +167,25 @@ if st.session_state.processed and st.session_state.sliced is not None:
         @st.cache_data(show_spinner="PPTX...")
         def get_pptx(_ld, _sl, _sm, _ri): return build_pptx_report(_ld, _sl, _sm, _ri)
 
-        # ZIP-архів
+        # ZIP-архів (З ОЧИЩЕННЯМ ПАМ'ЯТІ)
         @st.cache_data(show_spinner="Архівуємо...")
         def get_zip_archive(_ld, _sl, _qi, _sm, _ri):
-            plt.close('all') # Чистимо графіки перед стартом
+            plt.close('all') # Чистимо перед стартом
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
                 zf.writestr("results.xlsx", build_excel_report(_ld, _sl, _qi, _sm, _ri))
-                plt.close('all')
+                
+                plt.close('all') # Чистимо
                 zf.writestr("results.pdf", build_pdf_report(_ld, _sl, _sm, _ri))
-                plt.close('all')
+                
+                plt.close('all') # Чистимо
                 zf.writestr("results.docx", build_docx_report(_ld, _sl, _sm, _ri))
-                plt.close('all')
+                
+                plt.close('all') # Чистимо
                 zf.writestr("results.pptx", build_pptx_report(_ld, _sl, _sm, _ri))
+                
             return buf.getvalue()
 
-        # Кнопки
         c1, c2, c3, c4 = st.columns(4)
         if c1.button("📊 Excel"): c1.download_button("📥", get_excel(st.session_state.ld.df, sliced, st.session_state.qinfo, summaries, range_info), "s.xlsx")
         if c2.button("📄 PDF"): c2.download_button("📥", get_pdf(st.session_state.ld.df, sliced, summaries, range_info), "s.pdf")
