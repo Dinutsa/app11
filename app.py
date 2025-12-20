@@ -1,10 +1,10 @@
 import io
 import os
-import streamlit as st
 import zipfile
+import streamlit as st
 import plotly.express as px
-import matplotlib.pyplot as plt
 import pandas as pd
+import matplotlib.pyplot as plt
 
 # Імпорти
 from data_loader import load_excels, get_row_bounds, slice_range
@@ -16,35 +16,19 @@ from pdf_export import build_pdf_report
 from docx_export import build_docx_report
 from pptx_export import build_pptx_report
 
-st.set_page_config(
-    page_title="Обробка результатів студентських опитувань",
-    layout="wide",
-)
+st.set_page_config(page_title="Обробка результатів", layout="wide")
 
-def init_state():
-    defaults = {
-        "uploaded_files_store": None,
-        "ld": None,
-        "sliced": None,
-        "qinfo": None,
-        "summaries": None,
-        "processed": False,
-        "selected_code": None,
-        "from_row": 0,
-        "to_row": 0,
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-
-init_state()
+# Ініціалізація стану
+if 'processed' not in st.session_state: st.session_state.processed = False
+if 'ld' not in st.session_state: st.session_state.ld = None
+if 'uploaded_files_store' not in st.session_state: st.session_state.uploaded_files_store = None
 
 st.title("Аналіз результатів опитувань (Google Forms)")
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("1. Завантаження даних")
-    uploaded_files = st.file_uploader("Оберіть Excel-файли (.xlsx)", type=["xlsx"], accept_multiple_files=True)
+    st.header("1. Завантаження")
+    uploaded_files = st.file_uploader("Excel-файли (.xlsx)", type=["xlsx"], accept_multiple_files=True)
 
     if uploaded_files:
         if st.session_state.ld is None or uploaded_files != st.session_state.uploaded_files_store:
@@ -61,140 +45,157 @@ with st.sidebar:
     if st.session_state.ld:
         st.success(f"Завантажено: {st.session_state.ld.n_rows} анкет.")
         st.divider()
-        st.header("2. Вибір діапазону")
+        st.header("2. Фільтрація")
         min_r, max_r = get_row_bounds(st.session_state.ld)
         if max_r > min_r:
-            r_range = st.slider("Діапазон рядків", min_value=min_r, max_value=max_r, value=(st.session_state.from_row, st.session_state.to_row))
-            st.session_state.from_row = r_range[0]
-            st.session_state.to_row = r_range[1]
+            r_range = st.slider("Рядки", min_r, max_r, (st.session_state.from_row, st.session_state.to_row))
+            st.session_state.from_row, st.session_state.to_row = r_range
         
-        st.divider()
         c1, c2 = st.columns(2)
-        with c1:
-            if st.button("🚀 Обробити / Оновити", type="primary"):
-                sliced = slice_range(st.session_state.ld, st.session_state.from_row, st.session_state.to_row)
-                st.session_state.sliced = sliced
-                qinfo = classify_questions(sliced)
-                st.session_state.qinfo = qinfo
-                summaries = build_all_summaries(sliced, qinfo)
-                st.session_state.summaries = summaries
-                st.session_state.processed = True
-        with c2:
-            if st.button("❌ Скинути"):
-                for key in st.session_state.keys(): del st.session_state[key]
-                st.rerun()
+        if c1.button("🚀 Обробити", type="primary"):
+            sliced = slice_range(st.session_state.ld, st.session_state.from_row, st.session_state.to_row)
+            st.session_state.sliced = sliced
+            st.session_state.qinfo = classify_questions(sliced)
+            st.session_state.summaries = build_all_summaries(sliced, st.session_state.qinfo)
+            st.session_state.processed = True
+            
+        if c2.button("❌ Скинути"):
+            st.session_state.clear()
+            st.rerun()
 
 # --- MAIN ---
 if st.session_state.processed and st.session_state.sliced is not None:
     sliced = st.session_state.sliced
     summaries = st.session_state.summaries
     
-    tab1, tab2 = st.tabs(["📊 Аналіз", "📥 Експорт"])
+    t1, t2 = st.tabs(["📊 Аналіз", "📥 Експорт"])
     
-    with tab1:
+    # === ВКЛАДКА 1: АНАЛІЗ ===
+    with t1:
         st.info(f"**В роботі {len(sliced)} анкет** (рядки {st.session_state.from_row}–{st.session_state.to_row})")
-        with st.expander("🔍 Перегляд вихідних даних", expanded=False): st.dataframe(sliced, use_container_width=True)
+        with st.expander("🔍 Перегляд вихідних даних", expanded=False): 
+            st.dataframe(sliced, use_container_width=True)
+        
         st.divider()
         
-        # Детальний перегляд (Випадаючий список)
+        # 1. ДЕТАЛЬНИЙ ПЕРЕГЛЯД
         st.subheader("Детальний перегляд")
-        options = [qs.question.code for qs in summaries]
-        selected_code = st.selectbox("Оберіть питання:", options)
-        if selected_code:
-            selected = next((qs for qs in summaries if qs.question.code == selected_code), None)
-            if selected and not selected.table.empty:
-                st.markdown(f"**{selected.question.code}. {selected.question.text}**")
+        opts = [qs.question.code for qs in summaries]
+        sel = st.selectbox("Оберіть питання:", opts)
+        if sel:
+            q = next((x for x in summaries if x.question.code == sel), None)
+            if q and not q.table.empty:
+                st.markdown(f"**{q.question.text}**")
                 c1, c2 = st.columns([1.5, 1])
-                with c1: st.plotly_chart(px.pie(selected.table, names="Варіант відповіді", values="Кількість", hole=0, title="Розподіл"), use_container_width=True)
-                with c2: st.dataframe(selected.table, use_container_width=True)
+                with c1: st.plotly_chart(px.pie(q.table, names="Варіант відповіді", values="Кількість", hole=0, title="Розподіл"), use_container_width=True)
+                with c2: st.dataframe(q.table, use_container_width=True)
             else: st.warning("Немає даних.")
-        
-        # Повний список
-        st.divider()
-        st.subheader("📋 Повний огляд")
-        for qs in summaries:
-            if qs.table.empty: continue
-            with st.expander(f"{qs.question.code}. {qs.question.text}", expanded=True):
-                c1, c2 = st.columns([1, 1])
-                with c1: st.plotly_chart(px.pie(qs.table, names="Варіант відповіді", values="Кількість", hole=0), use_container_width=True, key=f"all_{qs.question.code}")
-                with c2: st.dataframe(qs.table, use_container_width=True)
 
-    with tab2:
+        st.divider()
+
+        # 2. КРОС-ТАБУЛЯЦІЯ (НОВЕ!)
+        st.subheader("🔀 Крос-табуляція (Фільтр)")
+        with st.expander("Налаштувати фільтр (Хто як відповів?)", expanded=True):
+            ct_col1, ct_col2, ct_col3 = st.columns(3)
+            
+            # Вибір питання-фільтра (наприклад "Курс")
+            with ct_col1:
+                filter_q_code = st.selectbox("1. Питання-фільтр:", opts, key="cross_q1")
+                filter_qs = next((x for x in summaries if x.question.code == filter_q_code), None)
+            
+            # Вибір значення фільтра (наприклад "1 курс")
+            with ct_col2:
+                if filter_qs:
+                    # Отримуємо унікальні відповіді з "сирих" даних для цього питання
+                    unique_vals = sliced[filter_qs.question.original_col].unique()
+                    # Прибираємо NaN
+                    unique_vals = [x for x in unique_vals if pd.notna(x)]
+                    filter_val = st.selectbox("2. Значення фільтра:", unique_vals, key="cross_val")
+            
+            # Вибір цільового питання (наприклад "Задоволеність")
+            with ct_col3:
+                target_q_code = st.selectbox("3. Що аналізуємо:", opts, key="cross_q2")
+                target_qs = next((x for x in summaries if x.question.code == target_q_code), None)
+
+            # Логіка фільтрації
+            if filter_qs and target_qs and filter_val:
+                # 1. Фільтруємо датафрейм
+                col_name_filter = filter_qs.question.original_col
+                col_name_target = target_qs.question.original_col
+                
+                subset = sliced[sliced[col_name_filter] == filter_val]
+                
+                if not subset.empty:
+                    st.markdown(f"### Результати для групи: **{filter_q_code} = {filter_val}** (Кількість: {len(subset)})")
+                    st.markdown(f"Питання: **{target_qs.question.text}**")
+                    
+                    # 2. Рахуємо статистику для підмножини
+                    counts = subset[col_name_target].value_counts().reset_index()
+                    counts.columns = ["Варіант відповіді", "Кількість"]
+                    counts["%"] = (counts["Кількість"] / len(subset) * 100).round(1)
+                    
+                    # 3. Відображаємо
+                    ct_chart, ct_data = st.columns([1.5, 1])
+                    with ct_chart:
+                        fig_cross = px.pie(counts, names="Варіант відповіді", values="Кількість", hole=0, title=f"Розподіл для '{filter_val}'")
+                        st.plotly_chart(fig_cross, use_container_width=True)
+                    with ct_data:
+                        st.dataframe(counts, use_container_width=True)
+                else:
+                    st.warning("Немає анкет з таким значенням фільтра.")
+
+        st.divider()
+        
+        # 3. ПОВНИЙ СПИСОК
+        st.subheader("📋 Повний огляд")
+        for q in summaries:
+            if q.table.empty: continue
+            with st.expander(f"{q.question.code}. {q.question.text}"):
+                c1, c2 = st.columns([1, 1])
+                with c1: st.plotly_chart(px.pie(q.table, names="Варіант відповіді", values="Кількість", hole=0), use_container_width=True, key=f"all_{q.question.code}")
+                with c2: st.dataframe(q.table, use_container_width=True)
+
+    # === ВКЛАДКА 2: ЕКСПОРТ ===
+    with t2:
         st.subheader("Експорт")
         range_info = f"Рядки {st.session_state.from_row}–{st.session_state.to_row}"
         
-        @st.cache_data(show_spinner="Генеруємо Excel...")
+        # Функції
+        @st.cache_data(show_spinner="Excel...")
         def get_excel(_ld, _sl, _qi, _sm, _ri): return build_excel_report(_ld, _sl, _qi, _sm, _ri)
-        @st.cache_data(show_spinner="Генеруємо PDF...")
+        @st.cache_data(show_spinner="PDF...")
         def get_pdf(_ld, _sl, _sm, _ri): return build_pdf_report(_ld, _sl, _sm, _ri)
-        @st.cache_data(show_spinner="Генеруємо DOCX...")
+        @st.cache_data(show_spinner="DOCX...")
         def get_docx(_ld, _sl, _sm, _ri): return build_docx_report(_ld, _sl, _sm, _ri)
-        @st.cache_data(show_spinner="Генеруємо PPTX...")
+        @st.cache_data(show_spinner="PPTX...")
         def get_pptx(_ld, _sl, _sm, _ri): return build_pptx_report(_ld, _sl, _sm, _ri)
 
-        @st.cache_data(show_spinner="Генеруємо повний архів...")
-        def get_zip_archive(_original_df, _sliced_df, _qinfo, _summaries, _range_info):
-            plt.close('all')
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-
-                excel_bytes = build_excel_report(_original_df, _sliced_df, _qinfo, _summaries, _range_info)
-                zip_file.writestr("results_excel.xlsx", excel_bytes)
+        # ZIP-архів
+        @st.cache_data(show_spinner="Архівуємо...")
+        def get_zip_archive(_ld, _sl, _qi, _sm, _ri):
+            plt.close('all') # Чистимо графіки перед стартом
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("results.xlsx", build_excel_report(_ld, _sl, _qi, _sm, _ri))
                 plt.close('all')
-
-                pdf_bytes = build_pdf_report(_original_df, _sliced_df, _summaries, _range_info)
-                zip_file.writestr("results_pdf.pdf", pdf_bytes)
+                zf.writestr("results.pdf", build_pdf_report(_ld, _sl, _sm, _ri))
                 plt.close('all')
-
-                docx_bytes = build_docx_report(_original_df, _sliced_df, _summaries, _range_info)
-                zip_file.writestr("results_word.docx", docx_bytes)
+                zf.writestr("results.docx", build_docx_report(_ld, _sl, _sm, _ri))
                 plt.close('all')
+                zf.writestr("results.pptx", build_pptx_report(_ld, _sl, _sm, _ri))
+            return buf.getvalue()
 
-                pptx_bytes = build_pptx_report(_original_df, _sliced_df, _summaries, _range_info)
-                zip_file.writestr("results_presentation.pptx", pptx_bytes)
-
-            return zip_buffer.getvalue()
-
-        cols = st.columns(4)
-        with cols[0]:
-            if st.button("📊 Excel"): st.download_button("📥 Завантажити", get_excel(st.session_state.ld.df, st.session_state.sliced, st.session_state.qinfo, st.session_state.summaries, range_info), "s.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        with cols[1]:
-            if st.button("📄 PDF"): st.download_button("📥 Завантажити", get_pdf(st.session_state.ld.df, st.session_state.sliced, st.session_state.summaries, range_info), "s.pdf", "application/pdf")
-        with cols[2]:
-            if st.button("📝 Word"): st.download_button("📥 Завантажити", get_docx(st.session_state.ld.df, st.session_state.sliced, st.session_state.summaries, range_info), "s.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-        with cols[3]:
-            if st.button("🖥️ PPTX"): st.download_button("📥 Завантажити", get_pptx(st.session_state.ld.df, st.session_state.sliced, st.session_state.summaries, range_info), "s.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+        # Кнопки
+        c1, c2, c3, c4 = st.columns(4)
+        if c1.button("📊 Excel"): c1.download_button("📥", get_excel(st.session_state.ld.df, sliced, st.session_state.qinfo, summaries, range_info), "s.xlsx")
+        if c2.button("📄 PDF"): c2.download_button("📥", get_pdf(st.session_state.ld.df, sliced, summaries, range_info), "s.pdf")
+        if c3.button("📝 Word"): c3.download_button("📥", get_docx(st.session_state.ld.df, sliced, summaries, range_info), "s.docx")
+        if c4.button("🖥️ PPTX"): c4.download_button("📥", get_pptx(st.session_state.ld.df, sliced, summaries, range_info), "s.pptx")
 
         st.divider()
-       
-        col_zip_left, col_zip_right = st.columns([2, 1])
-        
-        with col_zip_left:
-            st.write("📦 **Завантажити всі звіти одним архівом**")
-            st.caption("Містить: .xlsx, .pdf, .docx, .pptx")
-            
-        with col_zip_right:
-            if st.button("🗂️ Створити ZIP-архів", type="primary", use_container_width=True):
-                with st.spinner("Генеруємо всі 4 звіти та пакуємо в архів..."):
-                    try:
-                        zip_data = get_zip_archive(
-                            st.session_state.ld.df, 
-                            st.session_state.sliced, 
-                            st.session_state.qinfo, 
-                            st.session_state.summaries, 
-                            range_info
-                        )
-                        
-                        st.download_button(
-                            label="📥 Завантажити ZIP",
-                            data=zip_data,
-                            file_name="survey_full_report.zip",
-                            mime="application/zip",
-                            type="primary",
-                            use_container_width=True
-                        )
-                    except Exception as e:
-                        st.error(f"Помилка при створенні архіву: {e}")
+        if st.button("🗂️ Сформувати ZIP-архів", type="primary", use_container_width=True):
+            zip_data = get_zip_archive(st.session_state.ld.df, sliced, st.session_state.qinfo, summaries, range_info)
+            st.download_button("📥 Скачати ZIP", zip_data, "full_report.zip", "application/zip", type="primary", use_container_width=True)
 
 elif not st.session_state.ld:
     st.info("👈 Завантажте файл.")
