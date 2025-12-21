@@ -1,11 +1,3 @@
-"""
-Модуль експорту звіту у формат PDF.
-ВЕРСІЯ: TIMES NEW ROMAN STYLE (Tinos Font).
-- Використовує шрифт Tinos (аналог Times New Roman).
-- Повна підтримка кирилиці.
-- Розумні графіки (Стовпчики/Круг).
-"""
-
 import io
 import os
 import urllib.request
@@ -20,32 +12,27 @@ from fpdf import FPDF
 from classification import QuestionType
 from summary import QuestionSummary
 
-# --- НАЛАШТУВАННЯ ---
 CHART_DPI = 150
 BAR_WIDTH = 0.6
 
-# Налаштування шрифту (Tinos - це 100% аналог Times New Roman з кирилицею)
 FONT_FILENAME = "Tinos-Regular.ttf"
 FONT_PATH = os.path.join(os.getcwd(), FONT_FILENAME)
-# Пряме посилання на файл шрифту
 FONT_URL = "https://github.com/google/fonts/raw/main/apache/tinos/Tinos-Regular.ttf"
 
 def ensure_font_exists():
-    """Гарантує, що файл шрифту є на диску."""
     if not os.path.exists(FONT_PATH) or os.path.getsize(FONT_PATH) == 0:
         try:
-            print(f"🔄 Завантажую шрифт (Times style): {FONT_PATH}")
+            print(f"Завантажую шрифт (Times style): {FONT_PATH}")
             opener = urllib.request.build_opener()
             opener.addheaders = [('User-agent', 'Mozilla/5.0')]
             urllib.request.install_opener(opener)
             urllib.request.urlretrieve(FONT_URL, FONT_PATH)
-            print("✅ Шрифт успішно завантажено!")
+            print("Шрифт успішно завантажено!")
         except Exception as e:
-            print(f"❌ Помилка завантаження шрифту: {e}")
+            print(f"Помилка завантаження шрифту: {e}")
 
 class PDFReport(FPDF):
     def header(self):
-        # Використовуємо шрифт Times
         try:
             self.set_font("TimesUA", size=10)
             self.cell(0, 10, "Звіт про результати опитування", ln=1, align='R')
@@ -65,7 +52,6 @@ class PDFReport(FPDF):
 def create_chart_image(qs: QuestionSummary) -> io.BytesIO:
     plt.close('all')
     plt.clf()
-    # Шрифт на графіках теж робимо схожим на Times (serif)
     plt.rcParams.update({
         'font.size': 10,
         'font.family': 'serif' 
@@ -85,7 +71,6 @@ def create_chart_image(qs: QuestionSummary) -> io.BytesIO:
 
     if is_scale:
         fig = plt.figure(figsize=(6.0, 4.0))
-        # Колір стовпчиків - класичний синій
         bars = plt.bar(wrapped_labels, values, color='#4F81BD', width=BAR_WIDTH)
         plt.ylabel('Кількість')
         plt.grid(axis='y', linestyle='--', alpha=0.5)
@@ -126,15 +111,14 @@ def build_pdf_report(original_df, sliced_df, summaries, range_info) -> bytes:
     font_ok = False
     if os.path.exists(FONT_PATH) and os.path.getsize(FONT_PATH) > 0:
         try:
-            # Реєструємо шрифт під назвою "TimesUA"
             pdf.add_font("TimesUA", fname=FONT_PATH)
             font_ok = True
         except Exception as e:
-            print(f"⚠️ Font error: {e}")
+            print(f"Font error: {e}")
 
     pdf.add_page()
     
-    # --- ТИТУЛКА (Times New Roman Style) ---
+    # --- ТИТУЛКА  ---
     if font_ok:
         pdf.set_font("TimesUA", size=16)
         pdf.cell(0, 10, "Звіт про результати опитування", ln=1, align='C')
@@ -162,7 +146,7 @@ def build_pdf_report(original_df, sliced_df, summaries, range_info) -> bytes:
         
         # Назва питання
         if font_ok:
-            pdf.set_font("TimesUA", size=12) # Звичайний Times
+            pdf.set_font("TimesUA", size=12) 
             pdf.multi_cell(0, 6, title)
         else:
             pdf.set_font("Times", "B", 12)
@@ -176,8 +160,7 @@ def build_pdf_report(original_df, sliced_df, summaries, range_info) -> bytes:
 
         col_w1 = 110
         col_w2 = 30
-        
-        # Заголовки таблиці
+
         h1 = "Варіант" if font_ok else "Option"
         h2 = "Кільк." if font_ok else "Count"
         h3 = "%"
