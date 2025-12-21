@@ -41,14 +41,6 @@ class PDFReport(FPDF):
             self.set_font("Times", "B", 10)
             self.cell(0, 10, "Survey Report", ln=1, align='R')
 
-    def footer(self):
-        self.set_y(-15)
-        try:
-            self.set_font("TimesUA", size=8)
-        except:
-            self.set_font("Times", "I", 8)
-        self.cell(0, 10, f'Page {self.page_no()}', align='C')
-
 def create_chart_image(qs: QuestionSummary) -> io.BytesIO:
     plt.close('all')
     plt.clf()
