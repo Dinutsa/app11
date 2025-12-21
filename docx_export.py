@@ -151,7 +151,6 @@ def build_docx_report(original_df, sliced_df, summaries, range_info) -> bytes:
     doc.add_paragraph()
 
     footer_text = [
-        "Дякую за увагу!",
         "Створено за допомогою додатку Survey Analytics студентки МПУіК Каптар Діани.",
         "Керівник проєкту – доцент Фратавчан Валерій Григорович."
     ]
