@@ -158,14 +158,13 @@ def build_docx_report(original_df, sliced_df, summaries, range_info) -> bytes:
 
     for line in footer_text:
         p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER 
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT 
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(2)
         
         run = p.add_run(line)
         run.font.name = 'Times New Roman'
-        run.font.size = Pt(10)          
-        run.font.italic = True          
+        run.font.size = Pt(12)                   
         run.font.color.rgb = RGBColor(100, 100, 100) 
 
     output = io.BytesIO()
