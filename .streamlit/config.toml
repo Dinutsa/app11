@@ -1,6 +1,6 @@
 [theme]
 base = "light"
-primaryColor = "#4F81BD"  # Синій колір (як на ваших діаграмах)
+primaryColor = "#4F81BD"  # Синій колір
 backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F0F2F6"
 textColor = "#31333F"
