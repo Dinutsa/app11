@@ -153,8 +153,10 @@ def build_pptx_report(original_df, sliced_df, summaries, range_info):
 
     slide = prs.slides.add_slide(prs.slide_layouts[0])
     try:
-        slide.shapes.title.text = "Дякую за увагу"
-        slide.placeholders[1].text = f"Створено за допомогою додатку студентки МПУіК Каптар Діани"
+        slide.shapes.title.text = "Дякую за увагу!"
+        slide.placeholders[1].text = f"Створено за допомогою додатку студентки МПУіК - Каптар Діани."
+        slide.placeholders[1].text = f"Керівник – доцент Фратавчан Валерій Григорович."
+
     except: pass
 
     output = io.BytesIO()
