@@ -5,7 +5,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from docx import Document
-from docx.shared import Inches, Pt
+from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -147,9 +147,26 @@ def build_docx_report(original_df, sliced_df, summaries, range_info) -> bytes:
         except: pass
         doc.add_paragraph("\n")
     
-    doc.add_paragraph(f"Дякую за увагу!")
-    doc.add_paragraph(f"Створено за допомогою додатку студентки МПУіК Каптар Діани.")
-    doc.add_paragraph(f"Керівник проєкту – доцент Фратавчан Валерій Григорович.")
+    doc.add_paragraph()
+    doc.add_paragraph()
+
+    footer_text = [
+        "Дякую за увагу!",
+        "Створено за допомогою додатку Survey Analytics студентки МПУіК Каптар Діани.",
+        "Керівник проєкту – доцент Фратавчан Валерій Григорович."
+    ]
+
+    for line in footer_text:
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER 
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(2)
+        
+        run = p.add_run(line)
+        run.font.name = 'Times New Roman'
+        run.font.size = Pt(10)          
+        run.font.italic = True          
+        run.font.color.rgb = RGBColor(100, 100, 100) 
 
     output = io.BytesIO()
     doc.save(output)
