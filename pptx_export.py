@@ -17,7 +17,7 @@ from summary import QuestionSummary
 from typing import List
 
 LOGO_FILE = "logo2.png"
-UNIV_NAME = "Чернівецький національний університет імені Юрія Фкдьковича"
+UNIV_NAME = "Чернівецький національний університет імені Юрія Федьковича"
 CHART_DPI = 150
 FONT_SIZE_CHART = 11        
 FONT_SIZE_HEADER = 12 
