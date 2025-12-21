@@ -1,6 +1,6 @@
 import io
 import textwrap
-import pandas as pd # Імпорт Pandas обов'язковий!
+import pandas as pd 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -14,7 +14,6 @@ from classification import QuestionInfo, QuestionType
 from summary import QuestionSummary
 from typing import List
 
-# --- НАЛАШТУВАННЯ ---
 CHART_DPI = 150
 FONT_SIZE_CHART = 10
 BAR_WIDTH = 0.6
@@ -41,7 +40,6 @@ def create_chart_image(qs: QuestionSummary) -> io.BytesIO:
     values = qs.table["Кількість"]
     wrapped_labels = [textwrap.fill(l, 25) for l in labels]
 
-    # --- РОЗУМНА ПЕРЕВІРКА ТИПУ ---
     is_scale = (qs.question.qtype == QuestionType.SCALE)
     if not is_scale:
         try:
@@ -100,7 +98,7 @@ def build_docx_report(original_df, sliced_df, summaries, range_info) -> bytes:
     doc.add_paragraph(f"Всього анкет: {len(original_df)}")
     doc.add_paragraph(f"Оброблено: {len(sliced_df)}")
     doc.add_paragraph(f"Діапазон: {range_info}")
-    doc.add_page_break()
+    'doc.add_page_break()'
 
     for qs in summaries:
         if qs.table.empty: continue
